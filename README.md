@@ -51,3 +51,59 @@ ApexPulse/
 ├── .gitignore               # System cache & build exclusion filters
 ├── README.md                # Project documentation
 └── requirements.txt         # Environment dependencies
+
+---
+
+## File Naming Convention
+
+To enable zero-touch track detection, ensure your input CSV file includes the circuit name in its filename (e.g., `raw_telemetrySilverstone.csv`, `spa_session.csv`, or `monza_hotlap.csv`). 
+
+The pipeline parses the filename, tags the data, and loads the matching geometry configuration from `/tracks` automatically.
+
+---
+
+## Quickstart
+
+### 1. Installation
+Clone the repository and install required dependencies:
+```bash
+git clone [https://github.com/ItzJTz/ApexPulse.git](https://github.com/ItzJTz/ApexPulse.git)
+cd ApexPulse
+pip install -r requirements.txt
+
+### 2. Execution Workflow
+
+1. Place any raw telemetry file inside the `data/` directory (e.g., `data/raw_telemetrySilverstone.csv`).
+2. Process and clean raw data:
+   ```bash
+   python src/clean_telemetry.py
+
+Run terminal sector analysis:
+
+Bash
+python src/sector_analysis.py
+Generate telemetry dashboards and visual outputs:
+
+Bash
+python src/compare_laps.py
+python src/plot_circle.py
+python src/plot_delta.py
+python src/plot_traces.py
+python src/plot_track.py
+
+## Visual Analytics Showcase
+
+### 1. Reconstructed 2D Track Map & Speed Heatmap
+![Track Map](assets/track_map.png)
+
+### 2. Multi-Channel Telemetry Dashboard
+![Telemetry Traces](assets/telemetry_traces.png)
+
+### 3. G-G Friction Circle & Envelope Utilization
+![Friction Circle](assets/friction_circle.png)
+
+### 4. Continuous Spatial Time-Delta Engine
+![Time Delta](assets/time_delta.png)
+
+### 5. Spatial Lap Comparison with Differential Shading
+![Lap Comparison](assets/lap_comparison.png)
