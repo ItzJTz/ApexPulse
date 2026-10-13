@@ -106,13 +106,11 @@ Clone the repository and install required dependencies:
 ### 3. G-G Friction Circle & Envelope Utilization
 ![Friction Circle](assets/friction_circle.png)
 
-
-
-Creator:JT
-Focus: Data Engineering | Vehicle Dynamics | GT Motorsport
-
 ### 4. Continuous Spatial Time-Delta Engine
 ![Time Delta](assets/time_delta.png)
 
 ### 5. Spatial Lap Comparison with Differential Shading
 ![Lap Comparison](assets/lap_comparison.png)
+
+Creator:JT
+Focus: Data Engineering | Vehicle Dynamics | GT Motorsport
