@@ -1,0 +1,10 @@
+{
+  "circuit_name": "Nürburgring GP",
+  "total_length_m": 5148,
+  "sectors": {
+    "Turn 1-4 (Yokohama S)": [200, 900],
+    "Turn 5-7 (Müllenbach)": [1400, 2000],
+    "Turn 8-9 (Michael Schumacher S)": [2600, 3100],
+    "Turn 13-14 (NGK Chicane)": [4300, 4700]
+  }
+}

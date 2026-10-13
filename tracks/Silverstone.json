@@ -1,0 +1,10 @@
+{
+  "circuit_name": "Silverstone GP",
+  "total_length_m": 5891,
+  "sectors": {
+    "Turn 1 (Copse)": [300, 700],
+    "Turn 3-4 (Maggotts/Becketts)": [1000, 1600],
+    "Turn 9 (Stowe)": [2600, 3100],
+    "Turn 11 (Club)": [3800, 4400]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "circuit_name": "Autodromo Nazionale Monza",
+  "total_length_m": 5793,
+  "sectors": {
+    "Turn 1-2 (Variante del Rettifilo)": [200, 600],
+    "Turn 4-5 (Variante della Roggia)": [1700, 2100],
+    "Turn 8-9 (Lesmo)": [2800, 3300],
+    "Turn 11 (Variante Ascari)": [4200, 4800],
+    "Turn 13 (Curva Parabolica / Alboreto)": [5200, 5650]
+  }
+}

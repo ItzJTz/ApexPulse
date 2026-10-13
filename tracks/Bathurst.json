@@ -1,0 +1,11 @@
+{
+  "circuit_name": "Mount Panorama (Bathurst)",
+  "total_length_m": 6213,
+  "sectors": {
+    "Turn 1 (Hell Corner)": [150, 450],
+    "Turn 4 (The Cutting)": [1300, 1700],
+    "Turn 11-18 (Skyline & The Dipper)": [2900, 3600],
+    "Turn 19 (Forrest's Elbow)": [3800, 4100],
+    "Turn 21-22 (The Chase)": [5200, 5700]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "circuit_name": "Circuit de Spa-Francorchamps",
+  "total_length_m": 7004,
+  "sectors": {
+    "Turn 1 (La Source)": [100, 350],
+    "Turn 2-4 (Eau Rouge / Raidillon)": [450, 950],
+    "Turn 10 (Les Combes)": [2100, 2450],
+    "Turn 14-15 (Pouhon)": [3900, 4400],
+    "Turn 18-19 (Bus Stop Chicane)": [6300, 6700]
+  }
+}

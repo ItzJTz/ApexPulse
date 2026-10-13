@@ -1,0 +1,11 @@
+{
+  "circuit_name": "Suzuka Circuit",
+  "total_length_m": 5807,
+  "sectors": {
+    "Turn 1-2 (First Corner / Dunlop)": [150, 550],
+    "Turn 3-6 (The Esses)": [750, 1400],
+    "Turn 11 (Degner Curve)": [2400, 2800],
+    "Turn 13-14 (Spoon Curve)": [3800, 4300],
+    "Turn 16-17 (130R & Casio Triangle)": [5000, 5600]
+  }
+}

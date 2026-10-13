@@ -1,0 +1,13 @@
+{
+  "circuit_name": "Autodromo Enzo e Dino Ferrari (Imola)",
+  "total_length_m": 4909,
+  "sectors": {
+    "Turn 2-4 (Tamburello)": [500, 900],
+    "Turn 5-6 (Villeneuve)": [1100, 1500],
+    "Turn 7 (Tosa)": [1600, 1900],
+    "Turn 9 (Piratella)": [2200, 2500],
+    "Turn 11-13 (Acque Minerali)": [2800, 3300],
+    "Turn 14-15 (Variante Alta)": [3700, 4000],
+    "Turn 17-18 (Rivazza)": [4200, 4700]
+  }
+}

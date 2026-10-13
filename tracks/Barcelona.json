@@ -1,0 +1,11 @@
+{
+  "circuit_name": "Circuit de Barcelona-Catalunya",
+  "total_length_m": 4675,
+  "sectors": {
+    "Turn 1-2 (Elf Chicane)": [300, 750],
+    "Turn 4 (Repsol)": [1200, 1550],
+    "Turn 9 (Campsa)": [2600, 2900],
+    "Turn 10 (La Caixa)": [3100, 3450],
+    "Turn 13-14 (Final Sector / New Layout)": [4000, 4500]
+  }
+}
