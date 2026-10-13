@@ -20,37 +20,36 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 
 ## Repository Architecture
 
-```text
-ApexPulse/
-├── assets/                  # High-resolution dark-theme dashboard exports (.png)
-│   ├── friction_circle.png
-│   ├── lap_comparison.png
-│   ├── telemetry_traces.png
-│   ├── time_delta.png
-│   └── track_map.png
-├── data/                    # Raw telemetry inputs and cleaned datasets (.csv)
-│   ├── clean_data.csv
-│   └── raw_telemetrySilverstone.csv
-├── src/                     # Core analytical and plotting modules
-│   ├── clean_telemetry.py   # Raw data ingestion, noise filtering, auto-tagging
-│   ├── compare_laps.py      # Spatial grid alignment & differential speed shading
-│   ├── plot_circle.py       # G-G Friction Circle and peak force analysis
-│   ├── plot_delta.py        # Cumulative spatial time-delta engine
-│   ├── plot_traces.py       # Multi-panel driver input dashboard
-│   ├── plot_track.py        # Kinematic 2D track layout reconstruction & heatmap
-│   └── sector_analysis.py   # Config-driven corner V-Min & sector breakdown
-├── tracks/                  # Circuit sector configuration files (.json)
-│   ├── Barcelona.json
-│   ├── Bathurst.json
-│   ├── Imola.json
-│   ├── Monza.json
-│   ├── Nurburgring.json
-│   ├── Silverstone.json
-│   ├── Spa.json
-│   └── Suzuka.json
-├── .gitignore               # System cache & build exclusion filters
-├── README.md                # Project documentation
-└── requirements.txt         # Environment dependencies
+    ApexPulse/
+    ├── assets/                  # High-resolution dark-theme dashboard exports (.png)
+    │   ├── friction_circle.png
+    │   ├── lap_comparison.png
+    │   ├── telemetry_traces.png
+    │   ├── time_delta.png
+    │   └── track_map.png
+    ├── data/                    # Raw telemetry inputs and cleaned datasets (.csv)
+    │   ├── clean_data.csv
+    │   └── raw_telemetrySilverstone.csv
+    ├── src/                     # Core analytical and plotting modules
+    │   ├── clean_telemetry.py   # Raw data ingestion, noise filtering, auto-tagging
+    │   ├── compare_laps.py      # Spatial grid alignment & differential speed shading
+    │   ├── plot_circle.py       # G-G Friction Circle and peak force analysis
+    │   ├── plot_delta.py        # Cumulative spatial time-delta engine
+    │   ├── plot_traces.py       # Multi-panel driver input dashboard
+    │   ├── plot_track.py        # Kinematic 2D track layout reconstruction & heatmap
+    │   └── sector_analysis.py   # Config-driven corner V-Min & sector breakdown
+    ├── tracks/                  # Circuit sector configuration files (.json)
+    │   ├── Barcelona.json
+    │   ├── Bathurst.json
+    │   ├── Imola.json
+    │   ├── Monza.json
+    │   ├── Nurburgring.json
+    │   ├── Silverstone.json
+    │   ├── Spa.json
+    │   └── Suzuka.json
+    ├── .gitignore               # System cache & build exclusion filters
+    ├── README.md                # Project documentation
+    └── requirements.txt         # Environment dependencies
 
 ---
 
@@ -66,30 +65,35 @@ The pipeline parses the filename, tags the data, and loads the matching geometry
 
 ### 1. Installation
 Clone the repository and install required dependencies:
-```bash
-git clone [https://github.com/ItzJTz/ApexPulse.git](https://github.com/ItzJTz/ApexPulse.git)
-cd ApexPulse
-pip install -r requirements.txt
+
+    git clone [https://github.com/ItzJTz/ApexPulse.git](https://github.com/ItzJTz/ApexPulse.git)
+    cd ApexPulse
+    pip install -r requirements.txt
+
 
 ### 2. Execution Workflow
 
-1. Place any raw telemetry file inside the `data/` directory (e.g., `data/raw_telemetrySilverstone.csv`).
-2. Process and clean raw data:
-   ```bash
-   python src/clean_telemetry.py
+**Step 1:** Place any raw telemetry file inside the `data/` directory (e.g., `data/raw_telemetrySilverstone.csv`).
 
-Run terminal sector analysis:
+**Step 2:** Run data ingestion, noise filtering, and track auto-tagging:
 
-Bash
-python src/sector_analysis.py
-Generate telemetry dashboards and visual outputs:
+    python src/clean_telemetry.py
 
-Bash
-python src/compare_laps.py
-python src/plot_circle.py
-python src/plot_delta.py
-python src/plot_traces.py
-python src/plot_track.py
+
+**Step 3:** Run corner-by-corner sector time and V-Min terminal analysis:
+
+    python src/sector_analysis.py
+
+
+**Step 4:** Render high-resolution telemetry plots and save image exports to `/assets`:
+
+    python src/compare_laps.py
+    python src/plot_circle.py
+    python src/plot_delta.py
+    python src/plot_traces.py
+    python src/plot_track.py
+
+---
 
 ## Visual Analytics Showcase
 
