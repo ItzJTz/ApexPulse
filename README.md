@@ -112,5 +112,5 @@ Clone the repository and install required dependencies:
 ### 5. Spatial Lap Comparison with Differential Shading
 ![Lap Comparison](assets/lap_comparison.png)
 
-Creator:JT
+Creator: JT
 Focus: Data Engineering | Vehicle Dynamics | GT Motorsport
