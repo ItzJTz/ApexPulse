@@ -1,6 +1,6 @@
 # ApexPulse | Track-Agnostic Telemetry & Dynamics Suite
 
-**ApexPulse** is an automated telemetry engineering pipeline and vehicle dynamics analysis toolkit built for sim racing (Assetto Corsa Competizione) and real-world logging systems (e.g., MoTeC). Developed in Python using Pandas, NumPy, and Matplotlib, it converts raw time-series telemetry into normalized spatial datasets, $G\text{-}G$ friction circles, continuous spatial time-delta curves, and corner-by-corner performance breakdowns.
+**ApexPulse** is an automated telemetry engineering pipeline and vehicle dynamics analysis toolkit built for sim racing (Assetto Corsa Competizione) and real-world logging systems (e.g., MoTeC). Developed in Python using Pandas and NumPy, it converts raw time-series telemetry into normalized spatial datasets, $G\text{-}G$ friction circles, continuous spatial time-delta curves, and corner-by-corner performance breakdowns.
 
 By decoupling analytical logic from circuit geometries through dynamic JSON configurations (`/tracks`), ApexPulse automatically detects track identity from dataset metadata and adapts to new circuits without any code modification.
 
