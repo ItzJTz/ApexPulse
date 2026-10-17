@@ -1,69 +1,140 @@
+import argparse
 import json
-import os
-import pandas as pd
+from pathlib import Path
 
-# 1. Locate clean telemetry file in data/ or root directory
-clean_file_path = os.path.join('data', 'clean_data.csv') if os.path.exists(os.path.join('data', 'clean_data.csv')) else 'clean_data.csv'
+import numpy as np
+if __package__:
+    from .telemetry_io import load_telemetry, valid_lap_numbers
+else:
+    from telemetry_io import load_telemetry, valid_lap_numbers
 
-if not os.path.exists(clean_file_path):
-    print("Error: 'clean_data.csv' not found. Run src/clean_telemetry.py first.")
-    exit()
 
-df = pd.read_csv(clean_file_path)
+def _sector_time(lap, start_distance, end_distance):
+    spatial_samples = (
+        lap.groupby("Normalized_Dist", as_index=False)["Ground Speed"]
+        .mean()
+        .sort_values("Normalized_Dist")
+    )
+    distance = spatial_samples["Normalized_Dist"].to_numpy(dtype=float)
+    speed_ms = np.maximum(spatial_samples["Ground Speed"].to_numpy(dtype=float) / 3.6, 1.0)
+    if distance[0] > start_distance or distance[-1] < end_distance:
+        return None
 
-# 2. Auto-detect track name embedded by clean_telemetry.py
-detected_track = df['Track'].iloc[0] if 'Track' in df.columns else "Silverstone"
-config_path = os.path.join("tracks", f"{detected_track}.json")
+    interior = (distance > start_distance) & (distance < end_distance)
+    sector_distances = np.concatenate(
+        (
+            [start_distance],
+            distance[interior],
+            [end_distance],
+        )
+    )
+    sector_speed = np.interp(sector_distances, distance, speed_ms)
+    intervals = np.diff(sector_distances)
+    return float(np.sum(intervals * (0.5 / sector_speed[:-1] + 0.5 / sector_speed[1:])))
 
-if not os.path.exists(config_path):
-    print(f"Error: Configuration file '{config_path}' not found in /tracks folder.")
-    exit()
 
-with open(config_path, "r") as f:
-    track_config = json.load(f)
+def analyze_sectors(clean_file_path="data/raw_telemetrySilverstone.csv", tracks_dir=None):
+    df = load_telemetry(clean_file_path, tracks_dir)
+    if "Track" not in df.columns or df["Track"].nunique() != 1:
+        raise ValueError(
+            f"Could not identify exactly one configured track from '{clean_file_path}'. "
+            "Use a filename containing a known track name or check the Venue metadata. "
+            "A generic filename such as 'clean_data.csv' needs to be renamed with the "
+            "track name or replaced with the original telemetry file."
+        )
 
-# 3. Filter out partial/incomplete laps automatically
-track_length = track_config.get("total_length_m", 5000)
-lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
-valid_laps = lap_max_distances[lap_max_distances >= (track_length * 0.90)].index.tolist()
+    track = df["Track"].iloc[0]
+    tracks_path = Path(tracks_dir) if tracks_dir else Path(__file__).resolve().parent.parent / "tracks"
+    config_path = tracks_path / f"{track}.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Track configuration not found: '{config_path}'.")
+    with config_path.open("r", encoding="utf-8") as stream:
+        track_config = json.load(stream)
 
-if len(valid_laps) < 2:
-    print(f"Error: Less than two complete flying laps found in dataset for {track_config['circuit_name']}.")
-    exit()
+    track_length = track_config.get("total_length_m")
+    if not isinstance(track_length, (int, float)) or track_length <= 0:
+        raise ValueError(f"Track configuration '{config_path}' has an invalid total_length_m.")
+    valid_laps = valid_lap_numbers(df, track_length=track_length)
+    if len(valid_laps) < 2:
+        raise ValueError(
+            f"Less than two complete flying laps found for {track_config.get('circuit_name', track)}."
+        )
 
-lap_A, lap_B = int(valid_laps[-2]), int(valid_laps[-1])
+    lap_a, lap_b = valid_laps[-2:]
+    laps = {
+        lap_number: df[df["Lap Number"] == lap_number].sort_values("Normalized_Dist")
+        for lap_number in (lap_a, lap_b)
+    }
 
-df_lapA = df[df['Lap Number'] == lap_A].sort_values(by='Lap Distance')
-df_lapB = df[df['Lap Number'] == lap_B].sort_values(by='Lap Distance')
+    print("=" * 89)
+    print(f" APEXPULSE SECTOR ANALYSIS: {track_config.get('circuit_name', track)}")
+    print(f" Comparing Lap {lap_a:g} vs Lap {lap_b:g} (last two complete laps)")
+    print("=" * 89)
+    print(
+        f"{'Corner Sector':<30} | {f'Lap {lap_a:g} V-Min':<14} | "
+        f"{f'Lap {lap_b:g} V-Min':<14} | {'V-Min Delta':<13} | {'Est. Sector Delta':<20}"
+    )
+    print("-" * 109)
 
-print(f"\n=========================================================================================")
-print(f"       APEXPULSE SECTOR & LAP TIME DELTA ANALYSIS: {track_config['circuit_name']}")
-print(f"       Comparing Lap {lap_A} vs Lap {lap_B} (Auto-Filtered Full Flying Laps)")
-print(f"=========================================================================================")
-print(f"{'Corner Sector':<30} | {f'Lap {lap_A} V-Min':<11} | {f'Lap {lap_B} V-Min':<11} | {'V-Min Delta':<11} | {'Est. Sector Delta':<16}")
-print("-" * 101)
+    for sector_name, bounds in track_config.get("sectors", {}).items():
+        if (
+            not isinstance(bounds, list)
+            or len(bounds) != 2
+            or not all(isinstance(value, (int, float)) for value in bounds)
+            or bounds[0] < 0
+            or bounds[1] <= bounds[0]
+        ):
+            raise ValueError(f"Invalid distance bounds for sector '{sector_name}' in '{config_path}'.")
+        start_distance, end_distance = bounds
+        sector_data = {}
+        for lap_number, lap in laps.items():
+            covered = lap[
+                lap["Normalized_Dist"].between(start_distance, end_distance, inclusive="both")
+            ]
+            sector_time = _sector_time(lap, start_distance, end_distance)
+            if covered.empty or sector_time is None:
+                sector_data = {}
+                break
+            sector_data[lap_number] = (float(covered["Ground Speed"].min()), sector_time)
 
-# 4. Calculate metrics per sector dynamically from JSON config
-for sector_name, (start_dist, end_dist) in track_config["sectors"].items():
-    zone_A = df_lapA[(df_lapA['Lap Distance'] >= start_dist) & (df_lapA['Lap Distance'] <= end_dist)]
-    zone_B = df_lapB[(df_lapB['Lap Distance'] >= start_dist) & (df_lapB['Lap Distance'] <= end_dist)]
-    
-    if not zone_A.empty and not zone_B.empty:
-        vmin_A = zone_A['Ground Speed'].min()
-        vmin_B = zone_B['Ground Speed'].min()
-        vmin_delta = vmin_B - vmin_A
-        vmin_str = f"+{vmin_delta:.1f}" if vmin_delta > 0 else f"{vmin_delta:.1f}"
-        
-        dist_span = end_dist - start_dist
-        avg_speed_A = zone_A['Ground Speed'].mean() / 3.6
-        avg_speed_B = zone_B['Ground Speed'].mean() / 3.6
-        
-        time_A = dist_span / avg_speed_A if avg_speed_A > 0 else 0
-        time_B = dist_span / avg_speed_B if avg_speed_B > 0 else 0
-        time_delta = time_A - time_B
-        
-        time_str = f"+{time_delta:.3f}s (B faster)" if time_delta > 0 else f"-{abs(time_delta):.3f}s (A faster)"
+        if not sector_data:
+            print(f"{sector_name:<30} | Not enough telemetry to cover {start_distance:g}-{end_distance:g} m")
+            continue
 
-        print(f"{sector_name:<30} | {vmin_A:5.1f} km/h  | {vmin_B:5.1f} km/h  | {vmin_str:>5} km/h  | {time_str}")
+        vmin_a, time_a = sector_data[lap_a]
+        vmin_b, time_b = sector_data[lap_b]
+        vmin_delta = vmin_b - vmin_a
+        time_delta = time_a - time_b
+        displayed_delta = round(time_delta, 3)
+        if displayed_delta > 0:
+            faster = "B faster"
+        elif displayed_delta < 0:
+            faster = "A faster"
+        else:
+            faster = "tie"
+        print(
+            f"{sector_name:<30} | {vmin_a:5.1f} km/h       | {vmin_b:5.1f} km/h       | "
+            f"{vmin_delta:+6.1f} km/h   | {displayed_delta:+.3f}s ({faster})"
+        )
+    print("=" * 89)
 
-print("=========================================================================================\n")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Compare the sector performance of the last two complete laps."
+    )
+    parser.add_argument(
+        "input",
+        nargs="?",
+        default="data/raw_telemetrySilverstone.csv",
+        help=(
+            "Raw or cleaned telemetry CSV. Its filename or Venue metadata must identify "
+            "a configured track (default: data/raw_telemetrySilverstone.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--tracks-dir",
+        help="Optional directory containing track configuration JSON files.",
+    )
+    arguments = parser.parse_args()
+    analyze_sectors(arguments.input, arguments.tracks_dir)

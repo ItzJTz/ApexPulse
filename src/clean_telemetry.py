@@ -1,75 +1,68 @@
-import pandas as pd
-import numpy as np
-import glob
+import json
 import os
+import argparse
+from pathlib import Path
 
-# 1. Search for raw telemetry CSV files in both data/ folder and root directory
-search_patterns = ['data/raw_*.csv', 'data/*.csv', 'raw_*.csv', '*.csv']
-raw_files = []
+if __package__:
+    from .telemetry_io import load_telemetry, process_session
+else:
+    from telemetry_io import load_telemetry, process_session
 
-for pattern in search_patterns:
-    found = glob.glob(pattern)
-    # Ignore any clean_data.csv files from search
-    found = [f for f in found if not f.endswith('clean_data.csv')]
-    if found:
-        raw_files.extend(found)
 
-# Remove duplicates while preserving order
-raw_files = list(dict.fromkeys(raw_files))
+def clean_telemetry(
+    raw_csv_path,
+    output_csv_path=None,
+    report_json_path=None,
+    minimum_lap_fraction=0.9,
+):
+    """Normalize telemetry, filter incomplete laps, and export CSV plus QC JSON."""
+    if output_csv_path is None:
+        base_name = os.path.basename(raw_csv_path)
+        output_csv_path = os.path.join("data", f"clean_{base_name}")
 
-if not raw_files:
-    print("Error: No raw CSV telemetry file found in project or data/ folder.")
-    exit()
+    output_csv_path = Path(output_csv_path)
+    report_json_path = (
+        Path(report_json_path)
+        if report_json_path
+        else output_csv_path.with_name(f"{output_csv_path.stem}_report.json")
+    )
+    telemetry, report = process_session(
+        load_telemetry(raw_csv_path),
+        minimum_fraction=minimum_lap_fraction,
+    )
+    output_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    report_json_path.parent.mkdir(parents=True, exist_ok=True)
+    telemetry.to_csv(output_csv_path, index=False)
+    report_json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Successfully cleaned '{raw_csv_path}' -> Saved to '{output_csv_path}'")
+    print(f"Data quality report saved to '{report_json_path}'")
+    return str(output_csv_path)
 
-# Pick the most recently modified file
-input_file = max(raw_files, key=os.path.getmtime)
-print(f"[AUTO-DETECT] Selected input file: '{input_file}'")
 
-# 2. Detect Track Name from filename
-filename_lower = os.path.basename(input_file).lower()
-known_tracks = ['silverstone', 'spa', 'monza', 'suzuka', 'imola', 'nurburgring', 'bathurst', 'barcelona']
-detected_track = "Silverstone"  # Default fallback
-
-for track in known_tracks:
-    if track in filename_lower:
-        detected_track = track.capitalize()
-        break
-
-print(f"[AUTO-DETECT] Identified Track: '{detected_track}'")
-
-# 3. Load raw telemetry data (skipping MoTeC header lines)
-try:
-    df = pd.read_csv(input_file, skiprows=14, on_bad_lines='skip')
-    print(f"Successfully loaded {input_file} ({len(df)} rows).")
-except Exception as e:
-    print(f"Error loading file: {e}")
-    exit()
-
-# Drop units row if present
-df = df.iloc[1:].reset_index(drop=True)
-
-# Coerce numerical columns
-for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-# 4. Filter and clean telemetry data
-target_columns = [
-    'Distance', 'Lap Distance', 'Lap Number', 'Ground Speed', 
-    'Throttle Pos', 'Brake Pos', 'Steering', 'G Force Lat', 'G Force Long'
-]
-
-available_cols = [c for c in target_columns if c in df.columns]
-df = df[available_cols].dropna(subset=['Lap Distance', 'Ground Speed'])
-
-# Smooth out sensor noise using a rolling median filter
-if 'Ground Speed' in df.columns:
-    df['Ground Speed'] = df['Ground Speed'].rolling(window=5, min_periods=1).median()
-
-# Embed the detected track name into the dataset metadata
-df['Track'] = detected_track
-
-# 5. Save cleaned pipeline output into data/ folder if it exists
-output_dir = 'data' if os.path.exists('data') else '.'
-output_file = os.path.join(output_dir, 'clean_data.csv')
-df.to_csv(output_file, index=False)
-print(f"[SUCCESS] Cleaned data saved to '{output_file}' with track tag: '{detected_track}'.\n")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Clean raw telemetry and write a data-quality report.")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        default="data/raw_telemetrySilverstone.csv",
+        help="Raw telemetry CSV (default: data/raw_telemetrySilverstone.csv).",
+    )
+    parser.add_argument(
+        "--output",
+        default="data/clean_data.csv",
+        help="Cleaned CSV output path (default: data/clean_data.csv).",
+    )
+    parser.add_argument("--report-json", help="Optional path for the quality report JSON.")
+    parser.add_argument(
+        "--minimum-lap-fraction",
+        type=float,
+        default=0.9,
+        help="Minimum fraction of track distance required for a valid lap.",
+    )
+    arguments = parser.parse_args()
+    clean_telemetry(
+        arguments.input,
+        arguments.output,
+        arguments.report_json,
+        arguments.minimum_lap_fraction,
+    )

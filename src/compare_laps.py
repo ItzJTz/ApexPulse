@@ -1,106 +1,85 @@
-import os
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt
+if __package__:
+    from .telemetry_io import fastest_lap_numbers, load_telemetry
+else:
+    from telemetry_io import fastest_lap_numbers, load_telemetry
 
-# =========================================================
-# CONFIGURATION & OVERRIDES
-LAP_A = None
-LAP_B = None
-# =========================================================
+def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=1.0):
+    if grid_step <= 0:
+        raise ValueError("grid_step must be greater than zero.")
+    df = load_telemetry(csv_path)
+    selected_laps = fastest_lap_numbers(df)
+    if len(selected_laps) < 2:
+        raise ValueError(f"Need at least two complete laps to compare; found {len(selected_laps)}.")
 
-# 1. Locate clean telemetry file
-clean_file_path = (
-    os.path.join('data', 'clean_data.csv')
-    if os.path.exists(os.path.join('data', 'clean_data.csv'))
-    else 'clean_data.csv'
-)
+    best_lap_num, second_best_lap_num = selected_laps
+    lap_a = df[df["Lap Number"] == best_lap_num].copy()
+    lap_b = df[df["Lap Number"] == second_best_lap_num].copy()
 
-if not os.path.exists(clean_file_path):
-    print("Error: 'clean_data.csv' not found.")
-    exit()
+    # 6. Spatial Grid Interpolation
+    dist_a = lap_a["Normalized_Dist"].to_numpy()
+    speed_a_raw = lap_a["Ground Speed"].to_numpy()
+    dist_b = lap_b["Normalized_Dist"].to_numpy()
+    speed_b_raw = lap_b["Ground Speed"].to_numpy()
 
-df = pd.read_csv(clean_file_path)
+    max_track_length = min(dist_a.max(), dist_b.max())
+    spatial_grid = np.arange(0, max_track_length, grid_step)
+    if len(spatial_grid) and spatial_grid[-1] < max_track_length:
+        spatial_grid = np.append(spatial_grid, max_track_length)
+    if len(spatial_grid) < 2:
+        raise ValueError("The selected laps do not contain enough distance for comparison.")
 
-# 2. Filter complete laps
-lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
-track_max_dist = lap_max_distances.max()
-valid_laps = lap_max_distances[
-    lap_max_distances >= (track_max_dist * 0.90)
-].index.tolist()
+    speed_a = np.interp(spatial_grid, dist_a, speed_a_raw)
+    speed_b = np.interp(spatial_grid, dist_b, speed_b_raw)
 
-if len(valid_laps) < 2:
-    print("Error: Less than two complete flying laps found in dataset.")
-    exit()
+    v_a_ms = np.maximum(speed_a / 3.6, 1.0)
+    v_b_ms = np.maximum(speed_b / 3.6, 1.0)
 
-lap_A = LAP_A if LAP_A is not None else int(valid_laps[-2])
-lap_B = LAP_B if LAP_B is not None else int(valid_laps[-1])
+    interval_distances = np.diff(spatial_grid)
+    intervals_a = interval_distances * (0.5 / v_a_ms[:-1] + 0.5 / v_a_ms[1:])
+    intervals_b = interval_distances * (0.5 / v_b_ms[:-1] + 0.5 / v_b_ms[1:])
+    time_delta = np.concatenate(([0.0], np.cumsum(intervals_a - intervals_b)))
 
-df_lapA = df[df['Lap Number'] == lap_A].sort_values(by='Lap Distance').copy()
-df_lapB = df[df['Lap Number'] == lap_B].sort_values(by='Lap Distance').copy()
+    # 7. Match G-G Friction Circle Dark Theme Colors
+    DARK_BG = "#0e1117"
+    PANEL_BG = "#161b22"
+    GRID_COLOR = "#21262d"
+    TEXT_COLOR = "#c9d1d9"
+    ACCENT_GREEN = "#00ff66"
+    ACCENT_RED = "#ff0055"
+    ACCENT_CYAN = "#00f2fe"
 
-# 3. Clean Data: Enforce strict monotonic distance & apply rolling median to remove sensor spikes
-df_lapA = df_lapA[df_lapA['Lap Distance'].diff().fillna(1) > 0]
-df_lapB = df_lapB[df_lapB['Lap Distance'].diff().fillna(1) > 0]
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig.patch.set_facecolor(DARK_BG)
 
-channels_to_smooth = ['Ground Speed', 'Throttle Pos', 'Brake Pos']
-for col in channels_to_smooth:
-    if col in df_lapA.columns:
-        df_lapA[col] = df_lapA[col].rolling(window=5, min_periods=1, center=True).median()
-        df_lapB[col] = df_lapB[col].rolling(window=5, min_periods=1, center=True).median()
+    for ax in (ax1, ax2):
+        ax.set_facecolor(PANEL_BG)
+        ax.grid(True, color=GRID_COLOR, linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.tick_params(colors=TEXT_COLOR, labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_color("#30363d")
 
-# 4. Interpolate onto a uniform 1-meter spatial grid to enable differential shading
-max_common_dist = min(df_lapA['Lap Distance'].max(), df_lapB['Lap Distance'].max())
-common_dist = np.arange(0, max_common_dist, 1.0)
+    # Panel 1: Speed Overlay
+    ax1.plot(spatial_grid, speed_a, label=f"Fastest Lap ({best_lap_num:g})", color=ACCENT_GREEN, linewidth=1.8)
+    ax1.plot(spatial_grid, speed_b, label=f"Second Fastest ({second_best_lap_num:g})", color=ACCENT_RED, linewidth=1.8, linestyle="--")
+    ax1.set_ylabel("Speed (km/h)", color=TEXT_COLOR, fontsize=11, fontweight="bold")
+    ax1.set_title(f"ApexPulse | Lap {best_lap_num:g} vs Lap {second_best_lap_num:g} Spatial Overlay", color="#ffffff", fontsize=14, fontweight="bold", pad=15)
 
-speed_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Ground Speed'])
-speed_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Ground Speed'])
-throttle_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Throttle Pos'])
-throttle_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Throttle Pos'])
-brake_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Brake Pos'])
-brake_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Brake Pos'])
+    legend = ax1.legend(loc="upper right", facecolor=DARK_BG, edgecolor="#30363d")
+    plt.setp(legend.get_texts(), color="#ffffff", fontweight="bold")
 
-# 5. Render Multi-Channel Dark Theme Plot
-plt.style.use('dark_background')
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 9), sharex=True, facecolor='#0f111a')
+    # Panel 2: Continuous Time Delta Line
+    ax2.plot(spatial_grid, time_delta, color=ACCENT_CYAN, linewidth=2.0)
+    ax2.axhline(0, color="#8b949e", linestyle=":", alpha=0.8)
+    ax2.set_xlabel("Track Distance (m)", color=TEXT_COLOR, fontsize=11, fontweight="bold")
+    ax2.set_ylabel("Time Delta (s)", color=TEXT_COLOR, fontsize=11, fontweight="bold")
 
-color_A = '#00d2ff'  # Electric Blue
-color_B = '#ff007f'  # Neon Pink
+    plt.tight_layout()
+    plt.savefig("assets/lap_comparison.png", dpi=300, facecolor=DARK_BG)
+    print(f"Comparison complete! Saved matching dark-theme export to assets/lap_comparison.png")
 
-for ax in (ax1, ax2, ax3):
-    ax.set_facecolor('#161925')
-    ax.grid(True, linestyle=':', alpha=0.3, color='#444c63')
+    plt.show()
 
-# Speed Chart with Differential Shading
-ax1.plot(common_dist, speed_A, color=color_A, label=f'Lap {lap_A}', linewidth=1.5)
-ax1.plot(common_dist, speed_B, color=color_B, label=f'Lap {lap_B}', linewidth=1.5)
-ax1.fill_between(common_dist, speed_A, speed_B, where=(speed_B > speed_A), color=color_B, alpha=0.3)
-ax1.fill_between(common_dist, speed_A, speed_B, where=(speed_A > speed_B), color=color_A, alpha=0.3)
-ax1.set_ylabel('Speed\n(km/h)', fontsize=10, color='#a0a5b5')
-ax1.legend(loc='upper right', frameon=True, facecolor='#212638')
-ax1.set_title(
-    f'ApexPulse 1-Meter Spatial Grid Alignment: Lap {lap_A} vs Lap {lap_B}',
-    fontsize=14, fontweight='bold', pad=12,
-)
-
-# Throttle Position
-ax2.plot(common_dist, throttle_A, color=color_A, label=f'Lap {lap_A}', linewidth=1.2, alpha=0.9)
-ax2.plot(common_dist, throttle_B, color=color_B, label=f'Lap {lap_B}', linewidth=1.2, alpha=0.9)
-ax2.set_ylabel('Throttle\n(%)', fontsize=10, color='#a0a5b5')
-ax2.legend(loc='upper right', frameon=True, facecolor='#212638')
-
-# Brake Position
-ax3.plot(common_dist, brake_A, color=color_A, label=f'Lap {lap_A}', linewidth=1.2, alpha=0.9)
-ax3.plot(common_dist, brake_B, color=color_B, label=f'Lap {lap_B}', linewidth=1.2, alpha=0.9)
-ax3.set_ylabel('Brake\n(%)', fontsize=10, color='#a0a5b5')
-ax3.legend(loc='upper right', frameon=True, facecolor='#212638')
-ax3.set_xlabel('Lap Distance (meters)', fontsize=11, color='#a0a5b5')
-
-plt.tight_layout()
-
-os.makedirs('assets', exist_ok=True)
-output_img = os.path.join('assets', 'lap_comparison.png')
-plt.savefig(output_img, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
-print(f"[SUCCESS] Spatial lap comparison saved to '{output_img}'.")
-
-plt.show()
+if __name__ == "__main__":
+    compare_laps()
