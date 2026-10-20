@@ -196,7 +196,13 @@ def optimal_lap_analysis(frame, micro_sector_meters=50.0):
         lap_number: float(times.sum())
         for lap_number, times in times_by_lap.items()
     }
-    actual_best_lap = min(lap_totals, key=lap_totals.__getitem__)
+    actual_best_lap = min(
+        valid_laps,
+        key=lambda lap_number: lap_time_seconds(
+            frame[frame["Lap Number"] == lap_number]
+        ),
+    )
+    spatial_best_lap = min(lap_totals, key=lap_totals.__getitem__)
     sector_results = []
     for index in range(sector_count):
         best_lap = min(
@@ -219,9 +225,13 @@ def optimal_lap_analysis(frame, micro_sector_meters=50.0):
         "common_distance_m": common_distance,
         "micro_sector_meters": float(micro_sector_meters),
         "actual_best_lap": float(actual_best_lap),
-        "actual_best_seconds": lap_totals[actual_best_lap],
+        "actual_best_seconds": lap_time_seconds(
+            frame[frame["Lap Number"] == actual_best_lap]
+        ),
+        "spatial_best_lap": float(spatial_best_lap),
+        "spatial_best_seconds": lap_totals[spatial_best_lap],
         "theoretical_best_seconds": theoretical_best,
-        "potential_gain_seconds": lap_totals[actual_best_lap] - theoretical_best,
+        "potential_gain_seconds": lap_totals[spatial_best_lap] - theoretical_best,
         "sectors": sector_results,
     }
 

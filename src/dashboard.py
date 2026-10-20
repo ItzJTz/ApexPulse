@@ -733,7 +733,8 @@ def main():
             st.caption(
                 f"Estimates use distance/speed integration over {optimal['common_distance_m']:.0f} m. "
                 "The theoretical lap combines the fastest sector from different laps and is a "
-                "benchmark, not a lap achieved in one run."
+                "benchmark, not a lap achieved in one run. The best complete lap uses recorded "
+                "elapsed time when available; potential gain compares distance/speed estimates."
             )
         except ValueError as exc:
             st.info(str(exc))

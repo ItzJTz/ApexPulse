@@ -138,6 +138,29 @@ class LapAlignmentTests(unittest.TestCase):
             result["actual_best_seconds"] - result["theoretical_best_seconds"],
         )
 
+    def test_optimal_lap_reports_recorded_best_without_changing_estimated_gain(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1, 1, 1, 2, 2, 2],
+                    "Lap Distance": [0, 50, 100, 0, 50, 100],
+                    "Ground Speed": [36, 36, 36, 72, 72, 72],
+                    "Time": [0, 4.9, 9.8, 0, 5, 10],
+                }
+            )
+        )
+
+        result = optimal_lap_analysis(frame, micro_sector_meters=50)
+
+        self.assertEqual(result["actual_best_lap"], 1)
+        self.assertAlmostEqual(result["actual_best_seconds"], 9.8)
+        self.assertEqual(result["spatial_best_lap"], 2)
+        self.assertAlmostEqual(result["spatial_best_seconds"], 5.0)
+        self.assertAlmostEqual(
+            result["potential_gain_seconds"],
+            result["spatial_best_seconds"] - result["theoretical_best_seconds"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
