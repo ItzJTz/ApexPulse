@@ -1,6 +1,6 @@
 # ApexPulse | Track-Agnostic Telemetry & Dynamics Suite
 
-**ApexPulse** is an automated telemetry engineering pipeline and vehicle dynamics analysis toolkit built for sim racing (Assetto Corsa Competizione) and real-world logging systems (e.g., MoTeC). Developed in Python using Pandas, NumPy, Matplotlib, Plotly, and Streamlit, it converts raw time-series telemetry into normalized spatial datasets, $G\text{-}G$ plots, continuous spatial time-delta curves, and corner-by-corner performance breakdowns.
+**ApexPulse** is an automated telemetry engineering pipeline and vehicle dynamics analysis toolkit built for sim racing (Assetto Corsa Competizione) and real-world logging systems (e.g., MoTeC). Developed in Python using Pandas, NumPy, SciPy, FastDTW, Matplotlib, Plotly, and Streamlit, it converts raw time-series telemetry into normalized spatial datasets, $G\text{-}G$ plots, continuous spatial time-delta curves, and corner-by-corner performance breakdowns.
 
 By decoupling analytical logic from circuit geometries through dynamic JSON configurations (`/tracks`), ApexPulse automatically detects track identity from dataset metadata and adapts to new circuits without any code modification.
 
@@ -8,16 +8,18 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 
 ## Key Technical Features
 
-* **Zero-Touch Automated Data Pipeline:** Parses raw multi-row header metadata, filters sensor noise via rolling medians, auto-detects track identity from filenames, and exports clean normalized datasets.
+* **Zero-Touch Automated Data Pipeline:** Parses raw multi-row header metadata, applies rolling-median and zero-phase Butterworth filtering where timestamps support it, quarantines configured impossible speed/G samples, auto-detects track identity, and exports normalized datasets.
 * **Shared Telemetry Ingestion:** Canonicalizes lap, distance, and speed channels, sorts samples, reports invalid and repeated-distance rows, and uses a single lap-distance definition across ingestion and comparison. Valid samples at repeated distances are retained for time-based analysis.
-* **Interactive Session Dashboard:** Presents lap speed/delta, driver inputs, cross-session driver comparison, G-G sample density, a track view, sector estimates, theoretical optimal-lap analysis, and data-quality details in one browser UI.
+* **Interactive Session Dashboard:** Presents lap speed/delta, optional speed-profile DTW diagnostics, driver inputs, cross-session comparison, G-G sample density, track views, sector estimates, constrained optimal-lap analysis, tire metrics when channels exist, and data-quality details.
 * **Reproducible Session Reports:** Writes a cleaned CSV, a data-quality JSON report, and a session report with selected-lap and sector comparisons.
-* **1-Meter Spatial Grid Alignment:** Interpolates asynchronous time-series telemetry onto a uniform spatial grid ($1\text{m}$ resolution) to allow direct distance-aligned lap comparisons without time-base distortion.
+* **Configurable Cubic-Spline Spatial Alignment:** Interpolates telemetry onto a uniform spatial grid (1 m by default); cubic splines preserve first- and second-derivative continuity, with a linear fallback when fewer than three unique samples are available.
 * **Sample-Preserving Spatial Alignment:** Retains valid time samples even when distance is repeated at the logger's resolution, averaging by distance only for spatial interpolation.
 * **Kinematic 2D Track Map Reconstruction:** Provides track visualization from logged GPS coordinates or an explicitly approximate path reconstructed from lateral acceleration when GPS is unavailable.
 * **Vehicle Dynamics ($G\text{-}G$ Plots):** Visualizes lateral vs. longitudinal acceleration as sample density in the dashboard. The standalone friction-circle script also draws a superellipse envelope based on observed lap data; this is not a validated tire-grip limit.
 * **Config-Driven Corner Sector Analysis:** Reads JSON distance gates to evaluate corner minimum speed ($\text{V-Min}$) and sector time deltas.
 * **Automated Incomplete Lap Filtering:** Excludes laps below a configurable minimum distance-coverage threshold (90% by default) before analysis.
+* **Physics-Guarded Optimal Lap:** Uses dynamic programming to select the fastest sector combination that meets a configured speed-continuity tolerance at each splice. This remains a modeled benchmark, not a validated full vehicle simulation.
+* **Conditional Tire Analytics:** Computes observed G-G envelope area, inner/outer temperature gradient, and a steering-speed-lateral-G integral only when required channels are present; missing channels are reported rather than fabricated.
 
 ---
 
@@ -36,22 +38,13 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
     │   ├── clean_data.csv
     │   ├── data_with_math_channels.csv
     │   └── raw_telemetrySilverstone.csv
-    ├── src/                     # Core analysis, plotting, CLI, and dashboard modules
-    │   ├── __init__.py          # Python package marker
-    │   ├── analysis.py          # Shared lap alignment, sector metrics & session report
+    ├── config.yaml              # Shared coverage, grid, filter, and physics defaults
+    ├── src/
     │   ├── cli.py               # Configurable clean and dashboard commands
-    │   ├── dashboard.py         # Interactive browser-based session dashboard
-    │   ├── telemetry_io.py      # Shared CSV ingestion, channel normalization & lap timing
-    │   ├── clean_telemetry.py   # Raw data ingestion, noise filtering, auto-tagging
-    │   ├── compare_laps.py      # Spatial grid alignment & differential speed shading
-    │   ├── driver_comparison.py # Fastest-lap driver comparison
-    │   ├── math_channels.py     # Derived telemetry channels and plots
-    │   ├── optimal_lap.py       # Theoretical optimal-lap analysis
-    │   ├── plot_circle.py       # Standalone G-G friction-circle plot
-    │   ├── plot_delta.py        # Cumulative spatial time-delta engine
-    │   ├── plot_traces.py       # Multi-panel driver input dashboard
-    │   ├── plot_track.py        # Track visualization from telemetry
-    │   └── sector_analysis.py   # Config-driven corner V-Min & sector breakdown
+    │   ├── config.py            # YAML configuration loader
+    │   ├── core/                # Analysis, optimal lap, derived channels, sector logic
+    │   ├── pipeline/            # Telemetry ingestion and cleaning
+    │   └── visualization/       # Dashboard, standalone plots, shared Matplotlib style
     ├── tests/                   # Telemetry, analysis, CLI, and dashboard tests
     ├── tracks/                  # Circuit sector configuration files (.json)
     │   ├── Barcelona.json
@@ -71,11 +64,11 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 
 ---
 
-The top-level folders separate application code, tests, telemetry data, track configurations, and image assets. Generated reports go in the ignored `reports/` folder; the local `.venv/` environment is also ignored and should not be committed. Source modules stay under `src/` so the documented `python -m src...` commands continue to work.
+The source tree is divided into `src/pipeline/`, `src/core/`, and `src/visualization/`. Generated reports go in the ignored `reports/` folder; the local `.venv/` environment is also ignored and should not be committed.
 
 ## File Naming Convention
 
-To enable zero-touch track detection, ensure your input CSV file includes the circuit name in its filename (e.g., `raw_telemetrySilverstone.csv`, `spa_session.csv`, or `monza_hotlap.csv`). 
+To enable zero-touch track detection, ensure your input CSV file includes the circuit name in its filename (e.g., `raw_telemetrySilverstone.csv`, `spa_session.csv`, or `monza_hotlap.csv`).
 
 The pipeline parses the filename, tags the data, and loads the matching geometry configuration from `/tracks` automatically.
 
@@ -100,7 +93,7 @@ Run from the repository root. The input may be a raw MoTeC-style CSV or a previo
 
     .\.venv\Scripts\python.exe -m src.cli clean data\raw_telemetrySilverstone.csv --output-dir reports
 
-The command writes three artifacts into `reports/`: a normalized, complete-lap CSV; a data-quality JSON file with row exclusions, channel mappings, missing optional-channel rates, and lap coverage; and a session JSON report with lap, sector, and theoretical optimal-lap analysis when enough valid laps are available. Use `--minimum-lap-fraction` to adjust the complete-lap threshold, or `--report-json path.json` to choose the session-report location. `python src/clean_telemetry.py [input.csv] --output path.csv` remains available for the simple one-file cleaning workflow.
+The command writes three artifacts into `reports/`: a normalized, complete-lap CSV; a data-quality JSON file with quarantined rows, channel mappings, missing optional-channel rates, and lap coverage; and a session JSON report with lap, sector, and physically constrained optimal-lap analysis when enough valid laps are available. Use `--minimum-lap-fraction` to adjust the complete-lap threshold, or `--report-json path.json` to choose the session-report location. Defaults are centralized in `config.yaml`.
 
 Track identity is resolved from the input filename or MoTeC `Venue` metadata against JSON files in `tracks/`. If the track is unknown, generic lap analysis still works, but track-specific sectors are not guessed.
 
@@ -117,14 +110,15 @@ Then follow these steps:
 3. Select a **Reference lap** and a **Compared lap**. The dashboard initially selects the two fastest valid laps; you can change either selection.
 4. Open the tabs to review the session:
 
-   * **Overview:** lap speed traces and cumulative time delta. Positive delta means the compared lap is ahead.
+   * **Overview:** lap speed traces and cumulative time delta. Positive delta means the compared lap is ahead. An optional DTW panel aligns speed-profile shape for diagnosis only; it does not modify the time delta.
    * **Driver inputs:** available throttle, brake, steering, and G channels aligned by distance.
    * **G-G:** measured lateral/longitudinal acceleration sample density. Brighter cells mean more samples in that acceleration range; empty ranges are blank. Lateral G is signed left/right. Longitudinal G is sign-inverted, so positive means acceleration and negative means braking. It does not claim to estimate a validated tire-grip envelope.
    * **Track map:** logged GPS positions when usable; otherwise an explicitly labeled approximate path from lateral acceleration.
    * **Sectors:** minimum speeds and distance-integrated sector times when the track is identified and a matching configuration is available.
    * **Data quality:** included/excluded laps, dropped/duplicate rows, optional-channel completeness, and downloads for the cleaned CSV and JSON report.
    * **Driver comparison:** upload a second session to compare its fastest complete lap with the fastest complete lap from the main session. Both files should be from the same circuit and use compatible distance units. If track metadata is missing, confirm this manually in the tab.
-   * **Optimal lap:** combines each distance micro-sector's fastest observed time across complete laps. This is a theoretical benchmark assembled from different laps, not a lap achieved in one run.
+   * **Optimal lap:** uses dynamic programming to choose the fastest micro-sector combination within the configured seam-speed tolerance. It remains a theoretical benchmark assembled from different laps, not a full vehicle simulation.
+   * **Tire analytics:** plots inner-minus-outer temperature against lateral G and reports per-lap G-G envelope area and steering-speed-lateral-G integral when those input channels are available. Lap 2-to-25 area change is an observed change, not proof of tire degradation.
 
 5. Use the data-quality tab to check which laps and samples were retained before interpreting comparisons or downloading the cleaned data and report.
 
@@ -132,7 +126,7 @@ The dashboard reports sector times as estimates. A reconstructed path is not sur
 
 To run the separate command-line sector report, provide a raw or cleaned CSV whose filename or Venue metadata identifies its track:
 
-    python -m src.sector_analysis data/raw_telemetrySilverstone.csv
+    python -m src.core.sector_analysis data/raw_telemetrySilverstone.csv
 
 For the supplied Silverstone sample, this compares the last two complete laps. A generic filename such as `clean_data.csv` without Venue metadata cannot identify the circuit; use a track-named file or the original telemetry file instead.
 
@@ -140,11 +134,11 @@ The dashboard and command-line tools share lap alignment and telemetry processin
 
 To compare two real sessions, provide one CSV for each driver. The script selects the fastest complete lap in each file, aligns the speed traces by distance, and saves the plot to `assets/driver_comparison.png`:
 
-    .\.venv\Scripts\python.exe -m src.driver_comparison data\driverA_Silverstone.csv data\driverB_Silverstone.csv
+    .\.venv\Scripts\python.exe -m src.visualization.driver_comparison data\driverA_Silverstone.csv data\driverB_Silverstone.csv
 
 Both files should be from the same circuit and use compatible distance units. Use `--output path\to\comparison.png` to choose a different image path. For a plot-only demo without a second driver's data, `--synthetic-benchmark` generates synthetic speed for Driver B; do not treat that result as a real driver comparison.
 
-`python -m src.math_channels` is an optional standalone derived-channel plot. Its downforce estimate uses a fixed aerodynamic coefficient and its brake-bias output is a fixed assumption, so treat those channels as illustrative until calibrated for the vehicle.
+`python -m src.core.math_channels` generates the optional derived-channel plot. Its downforce multiplier, brake-bias value, and brake-active threshold are configured under `vehicle` in `config.yaml`; treat those channels as illustrative until calibrated for the vehicle. Tire analytics require corresponding temperature, acceleration, and steering signals; the dashboard explains which metrics cannot be calculated for a session. The optional DTW view matches speed-profile shape only and never replaces the distance-based lap delta.
 
 ### 4. Run automated checks
 

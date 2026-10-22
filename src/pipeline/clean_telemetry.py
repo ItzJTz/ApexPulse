@@ -3,17 +3,16 @@ import os
 import argparse
 from pathlib import Path
 
-if __package__:
-    from .telemetry_io import load_telemetry, process_session
-else:
-    from telemetry_io import load_telemetry, process_session
+from src.config import config_value
+from src.pipeline.telemetry_io import load_telemetry, process_session
 
 
 def clean_telemetry(
     raw_csv_path,
     output_csv_path=None,
     report_json_path=None,
-    minimum_lap_fraction=0.9,
+    minimum_lap_fraction=None,
+    rolling_median_window=None,
 ):
     """Normalize telemetry, filter incomplete laps, and export CSV plus QC JSON."""
     if output_csv_path is None:
@@ -29,6 +28,11 @@ def clean_telemetry(
     telemetry, report = process_session(
         load_telemetry(raw_csv_path),
         minimum_fraction=minimum_lap_fraction,
+        rolling_median_window=(
+            int(config_value("signal_filter", "rolling_median_window"))
+            if rolling_median_window is None
+            else rolling_median_window
+        ),
     )
     output_csv_path.parent.mkdir(parents=True, exist_ok=True)
     report_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--minimum-lap-fraction",
         type=float,
-        default=0.9,
+        default=None,
         help="Minimum fraction of track distance required for a valid lap.",
     )
     arguments = parser.parse_args()

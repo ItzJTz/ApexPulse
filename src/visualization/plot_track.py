@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.config import config_value
+from src.visualization.style import apply_style
+
 # =========================================================
 # CONFIGURATION & OVERRIDES
 # Set to a specific lap number (e.g., TARGET_LAP = 8) or None for latest complete lap
@@ -17,7 +20,7 @@ clean_file_path = (
 )
 
 if not os.path.exists(clean_file_path):
-    print("Error: 'clean_data.csv' not found. Run src/clean_telemetry.py first.")
+    print("Error: 'clean_data.csv' not found. Run python -m src.pipeline.clean_telemetry first.")
     exit()
 
 df = pd.read_csv(clean_file_path)
@@ -26,7 +29,8 @@ df = pd.read_csv(clean_file_path)
 lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
 track_max_dist = lap_max_distances.max()
 valid_laps = lap_max_distances[
-    lap_max_distances >= (track_max_dist * 0.90)
+    lap_max_distances
+    >= (track_max_dist * float(config_value("data", "minimum_lap_fraction")))
 ].index.tolist()
 
 if not valid_laps:
@@ -75,7 +79,7 @@ else:
 speed = df_lap['Ground Speed'].values
 
 # 4. Pro Telemetry Render
-plt.style.use('dark_background')
+apply_style()
 fig, ax = plt.subplots(figsize=(11, 8), facecolor='#0f111a')
 ax.set_facecolor('#161925')
 

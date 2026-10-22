@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from src.dashboard import _gg_figure, _track_figure
+from src.visualization.dashboard import _gg_figure, _track_figure
 
 
 class DashboardTests(unittest.TestCase):
@@ -41,7 +41,12 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("not surveyed geometry", figure.layout.title.text)
 
     def test_dashboard_renders_all_tabs_without_runtime_exceptions(self):
-        app_path = Path(__file__).resolve().parents[1] / "src" / "dashboard.py"
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "visualization"
+            / "dashboard.py"
+        )
         app = AppTest.from_file(str(app_path)).run(timeout=120)
 
         self.assertEqual(len(app.exception), 0)
@@ -56,6 +61,7 @@ class DashboardTests(unittest.TestCase):
                 "Data quality",
                 "Driver comparison",
                 "Optimal lap",
+                "Tire analytics",
             ],
         )
 

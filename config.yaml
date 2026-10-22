@@ -1,0 +1,25 @@
+data:
+  minimum_lap_fraction: 0.9
+
+analysis:
+  spatial_grid_m: 1.0
+  micro_sector_m: 50.0
+  max_boundary_speed_delta_mps: 2.0
+
+signal_filter:
+  enabled: true
+  rolling_median_window: 3
+  order: 4
+  cutoff_hz: 5.0
+
+quarantine:
+  max_speed_kmh: 350.0
+  max_lateral_g: 3.5
+
+tire_analysis:
+  friction_circle_exponent: 1.5
+
+vehicle:
+  aero_downforce_mult: 0.85
+  default_brake_bias: 58.5
+  brake_active_threshold: 0.05

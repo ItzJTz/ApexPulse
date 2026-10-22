@@ -2,8 +2,9 @@ import unittest
 
 import pandas as pd
 
-from src.analysis import align_driver_sessions, align_laps, optimal_lap_analysis
-from src.telemetry_io import prepare_telemetry_frame
+from src.core.analysis import align_driver_sessions, align_laps, optimal_lap_analysis
+from src.core.spatial import interpolate_spatial
+from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class LapAlignmentTests(unittest.TestCase):
@@ -51,7 +52,8 @@ class LapAlignmentTests(unittest.TestCase):
         result = align_laps(frame, 1, 2, grid_step=5)
 
         self.assertEqual(result["distance_m"].tolist(), [0, 5, 10])
-        self.assertEqual(result["speed_a_kmh"].tolist(), [36, 54, 36])
+        self.assertEqual(result["speed_a_kmh"][:2].tolist(), [36, 54])
+        self.assertAlmostEqual(result["speed_a_kmh"][2], 36)
         self.assertTrue(all(value == value for value in result["delta_b_ahead_s"]))
 
     def test_cross_session_alignment_uses_fastest_complete_laps(self):
@@ -98,6 +100,24 @@ class LapAlignmentTests(unittest.TestCase):
         self.assertEqual(result["lap_a_seconds"], 10)
         self.assertEqual(result["lap_b_seconds"], 1)
 
+    def test_optional_dtw_does_not_change_distance_delta(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1, 1, 1, 2, 2, 2],
+                    "Lap Distance": [0, 50, 100, 0, 50, 100],
+                    "Ground Speed": [36, 72, 36, 72, 36, 72],
+                }
+            )
+        )
+
+        standard = align_laps(frame, 1, 2, grid_step=25)
+        diagnostic = align_laps(frame, 1, 2, grid_step=25, include_dtw=True)
+
+        self.assertEqual(standard["delta_b_ahead_s"].tolist(), diagnostic["delta_b_ahead_s"].tolist())
+        self.assertIn("path_cost", diagnostic["dtw"])
+        self.assertGreater(len(diagnostic["dtw"]["distance_a_m"]), 0)
+
     def test_cross_session_alignment_rejects_known_different_tracks(self):
         frame_a = prepare_telemetry_frame(
             pd.DataFrame(
@@ -138,7 +158,7 @@ class LapAlignmentTests(unittest.TestCase):
             result["actual_best_seconds"] - result["theoretical_best_seconds"],
         )
 
-    def test_optimal_lap_reports_recorded_best_without_changing_estimated_gain(self):
+    def test_optimal_lap_keeps_recorded_and_theoretical_times_consistent(self):
         frame = prepare_telemetry_frame(
             pd.DataFrame(
                 {
@@ -154,11 +174,46 @@ class LapAlignmentTests(unittest.TestCase):
 
         self.assertEqual(result["actual_best_lap"], 1)
         self.assertAlmostEqual(result["actual_best_seconds"], 9.8)
-        self.assertEqual(result["spatial_best_lap"], 2)
-        self.assertAlmostEqual(result["spatial_best_seconds"], 5.0)
+        self.assertLessEqual(
+            result["theoretical_best_seconds"],
+            result["actual_best_seconds"],
+        )
         self.assertAlmostEqual(
             result["potential_gain_seconds"],
-            result["spatial_best_seconds"] - result["theoretical_best_seconds"],
+            result["actual_best_seconds"] - result["theoretical_best_seconds"],
+        )
+
+    def test_optimal_lap_rejects_discontinuous_sector_splices(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1, 1, 1, 2, 2, 2],
+                    "Lap Distance": [0, 50, 100, 0, 50, 100],
+                    "Ground Speed": [100, 10, 10, 10, 30, 100],
+                }
+            )
+        )
+
+        result = optimal_lap_analysis(frame, micro_sector_meters=50)
+
+        self.assertEqual(len(set(result["realizable_sector_laps"])), 1)
+        for previous, following in zip(
+            result["sectors"],
+            result["sectors"][1:],
+        ):
+            self.assertLessEqual(
+                abs(previous["end_speed_mps"] - following["start_speed_mps"]),
+                result["max_boundary_speed_delta_mps"],
+            )
+
+    def test_spatial_interpolation_uses_cubic_spline_for_cubic_data(self):
+        distances = [0, 1, 2, 3]
+        values = [0, 1, 8, 27]
+
+        result = interpolate_spatial(distances, values, [0.5, 1.5, 2.5])
+
+        self.assertTrue(
+            ((result - [0.125, 3.375, 15.625]) ** 2 < 1e-20).all()
         )
 
 

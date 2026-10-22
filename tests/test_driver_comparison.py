@@ -5,8 +5,8 @@ from unittest.mock import patch
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src import driver_comparison
-from src.telemetry_io import prepare_telemetry_frame
+from src.visualization import driver_comparison
+from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 def _telemetry_frame(speed):

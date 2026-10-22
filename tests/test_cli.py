@@ -37,6 +37,10 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output / "cleaned_session.csv").is_file())
             quality = json.loads((output / "session_quality.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["laps"]["complete"], [1.0, 2.0])
+            self.assertEqual(
+                quality["signal_filter"]["rolling_median_window"],
+                3,
+            )
             report = json.loads(
                 (output / "session_session_report.json").read_text(encoding="utf-8")
             )

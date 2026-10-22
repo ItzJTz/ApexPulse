@@ -4,14 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-if __package__:
-    from .analysis import analysis_report
-    from .clean_telemetry import clean_telemetry
-    from .telemetry_io import fastest_lap_numbers, load_telemetry
-else:
-    from analysis import analysis_report
-    from clean_telemetry import clean_telemetry
-    from telemetry_io import fastest_lap_numbers, load_telemetry
+from src.core.analysis import analysis_report
+from src.pipeline.clean_telemetry import clean_telemetry
+from src.pipeline.telemetry_io import fastest_lap_numbers, load_telemetry
 
 
 def _clean(args):
@@ -54,7 +49,7 @@ def _clean(args):
 
 
 def _dashboard(_):
-    app_path = Path(__file__).with_name("dashboard.py")
+    app_path = Path(__file__).parent / "visualization" / "dashboard.py"
     return subprocess.call(
         [
             sys.executable,
@@ -92,8 +87,8 @@ def build_parser():
     clean_parser.add_argument(
         "--minimum-lap-fraction",
         type=float,
-        default=0.9,
-        help="Minimum fraction of track distance required for a valid lap (default: 0.9).",
+        default=None,
+        help="Minimum fraction of track distance required for a valid lap (default: config.yaml).",
     )
     clean_parser.set_defaults(handler=_clean)
 

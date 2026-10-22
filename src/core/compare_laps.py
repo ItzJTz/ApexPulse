@@ -1,11 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
-if __package__:
-    from .telemetry_io import fastest_lap_numbers, load_telemetry
-else:
-    from telemetry_io import fastest_lap_numbers, load_telemetry
 
-def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=1.0):
+from src.config import config_value
+from src.core.spatial import interpolate_spatial
+from src.pipeline.telemetry_io import fastest_lap_numbers, load_telemetry
+from src.visualization.style import apply_style
+
+
+def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=None):
+    grid_step = (
+        config_value("analysis", "spatial_grid_m")
+        if grid_step is None
+        else grid_step
+    )
     if grid_step <= 0:
         raise ValueError("grid_step must be greater than zero.")
     df = load_telemetry(csv_path)
@@ -30,8 +37,8 @@ def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=1.0):
     if len(spatial_grid) < 2:
         raise ValueError("The selected laps do not contain enough distance for comparison.")
 
-    speed_a = np.interp(spatial_grid, dist_a, speed_a_raw)
-    speed_b = np.interp(spatial_grid, dist_b, speed_b_raw)
+    speed_a = interpolate_spatial(dist_a, speed_a_raw, spatial_grid)
+    speed_b = interpolate_spatial(dist_b, speed_b_raw, spatial_grid)
 
     v_a_ms = np.maximum(speed_a / 3.6, 1.0)
     v_b_ms = np.maximum(speed_b / 3.6, 1.0)
@@ -42,6 +49,7 @@ def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=1.0):
     time_delta = np.concatenate(([0.0], np.cumsum(intervals_a - intervals_b)))
 
     # 7. Match G-G Friction Circle Dark Theme Colors
+    apply_style()
     DARK_BG = "#0e1117"
     PANEL_BG = "#161b22"
     GRID_COLOR = "#21262d"

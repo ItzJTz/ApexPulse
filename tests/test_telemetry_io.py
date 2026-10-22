@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.telemetry_io import (
+from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     lap_time_seconds,
     load_telemetry,
@@ -114,6 +114,82 @@ class TelemetryIoTests(unittest.TestCase):
             report["channels"]["optional_missing_percent"]["Throttle Pos"],
             0.0,
         )
+
+    def test_zero_phase_filter_and_outlier_quarantine_are_reported(self):
+        count = 101
+        lateral = [0.0] * count
+        lateral[50] = 3.6
+        lateral[51] = 1.0
+        speed = [36.0] * count
+        speed[20] = 351.0
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Time": [index / 100 for index in range(count)],
+                    "Lap Number": [1] * count,
+                    "Lap Distance": list(range(count)),
+                    "Ground Speed": speed,
+                    "G Force Lat": lateral,
+                }
+            )
+        )
+
+        clean, report = process_session(frame)
+
+        self.assertEqual(report["rows"]["speed_outlier_quarantined"], 1)
+        self.assertEqual(report["rows"]["lateral_g_outlier_quarantined"], 1)
+        self.assertAlmostEqual(
+            report["signal_filter"]["laps"]["1"]["sample_rate_hz"],
+            100,
+        )
+        self.assertTrue(
+            report["signal_filter"]["laps"]["1"]["channels"]["G Force Lat"][
+                "filtered_segments"
+            ]
+        )
+        self.assertTrue(clean["G Force Lat"].isna().any())
+
+    def test_zero_phase_filter_keeps_a_centered_impulse_centered(self):
+        count = 101
+        lateral = [0.0] * count
+        lateral[50] = 2.0
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Time": [index / 100 for index in range(count)],
+                    "Lap Number": [1] * count,
+                    "Lap Distance": list(range(count)),
+                    "Ground Speed": [36.0] * count,
+                    "G Force Lat": lateral,
+                }
+            )
+        )
+
+        clean, _ = process_session(frame)
+
+        self.assertEqual(
+            clean["G Force Lat"].to_numpy().argmax(),
+            50,
+        )
+
+    def test_rolling_median_window_is_read_from_shared_config(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * 7,
+                    "Lap Distance": list(range(7)),
+                    "Ground Speed": [36, 36, 36, 100, 36, 36, 36],
+                }
+            )
+        )
+
+        clean, report = process_session(frame)
+
+        self.assertEqual(
+            report["signal_filter"]["rolling_median_window"],
+            3,
+        )
+        self.assertEqual(clean["Ground Speed"].tolist(), [36.0] * 7)
 
 
 if __name__ == "__main__":

@@ -3,10 +3,11 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-if __package__:
-    from .telemetry_io import fastest_lap_numbers, load_telemetry
-else:
-    from telemetry_io import fastest_lap_numbers, load_telemetry
+
+from src.config import config_value
+from src.core.spatial import interpolate_spatial
+from src.pipeline.telemetry_io import fastest_lap_numbers, load_telemetry
+from src.visualization.style import apply_style
 
 def load_file(filepath):
     """Load raw or cleaned telemetry into the shared canonical channel format."""
@@ -21,7 +22,16 @@ def extract_fastest_lap(df):
     best_lap_df = df[df["Lap Number"] == best_lap_num].copy()
 
     # Apply 3-point rolling median to eliminate single-frame dropouts
-    best_lap_df["Ground Speed"] = best_lap_df["Ground Speed"].rolling(window=3, center=True, min_periods=1).median()
+    median_window = int(config_value("signal_filter", "rolling_median_window"))
+    if median_window < 1:
+        raise ValueError(
+            "signal_filter.rolling_median_window must be a positive integer."
+        )
+    best_lap_df["Ground Speed"] = best_lap_df["Ground Speed"].rolling(
+        window=median_window,
+        center=True,
+        min_periods=1,
+    ).median()
     
     return best_lap_df, "Normalized_Dist", "Ground Speed", best_lap_num
 
@@ -59,14 +69,15 @@ def compare_two_drivers(
 
     # Interpolate both speed traces onto a unified 1m spatial grid
     max_track_length = min(distance_a.max(), dist_grid.max())
-    spatial_grid = np.arange(0, max_track_length, 1.0)
+    grid_step = float(config_value("analysis", "spatial_grid_m"))
+    spatial_grid = np.arange(0, max_track_length, grid_step)
     if len(spatial_grid) and spatial_grid[-1] < max_track_length:
         spatial_grid = np.append(spatial_grid, max_track_length)
     if len(spatial_grid) < 2:
         raise ValueError("The selected laps do not contain enough distance for comparison.")
 
-    speed_a = np.interp(spatial_grid, distance_a, speed_a_samples)
-    speed_b = np.interp(spatial_grid, dist_grid, speed_b_values)
+    speed_a = interpolate_spatial(distance_a, speed_a_samples, spatial_grid)
+    speed_b = interpolate_spatial(dist_grid, speed_b_values, spatial_grid)
 
     # Calculate spatial continuous time delta: dt = ds / v
     v_a_ms = np.maximum(speed_a / 3.6, 1.0)
@@ -77,6 +88,7 @@ def compare_two_drivers(
     time_delta = np.concatenate(([0.0], np.cumsum(intervals_a - intervals_b)))
 
     # Plot Dark-Theme Multi-Driver Dashboard
+    apply_style()
     DARK_BG, PANEL_BG, GRID_COLOR = "#0e1117", "#161b22", "#21262d"
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
     fig.patch.set_facecolor(DARK_BG)

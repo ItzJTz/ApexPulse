@@ -8,34 +8,22 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import streamlit as st
 
-if __package__:
-    from .analysis import (
-        align_driver_sessions,
-        align_laps,
-        load_track_config,
-        optimal_lap_analysis,
-        sector_results,
-    )
-    from .telemetry_io import (
-        fastest_lap_numbers,
-        load_telemetry,
-        load_telemetry_text,
-        process_session,
-    )
-else:
-    from analysis import (
-        align_driver_sessions,
-        align_laps,
-        load_track_config,
-        optimal_lap_analysis,
-        sector_results,
-    )
-    from telemetry_io import (
-        fastest_lap_numbers,
-        load_telemetry,
-        load_telemetry_text,
-        process_session,
-    )
+from src.config import config_value
+from src.core.analysis import (
+    align_driver_sessions,
+    align_laps,
+    load_track_config,
+    optimal_lap_analysis,
+    sector_results,
+)
+from src.core.math_channels import tire_metrics
+from src.pipeline.telemetry_io import (
+    fastest_lap_numbers,
+    load_telemetry,
+    load_telemetry_text,
+    process_session,
+)
+from src.core.spatial import interpolate_spatial
 
 
 @st.cache_data(show_spinner=False)
@@ -61,10 +49,10 @@ def _channel_trace(frame, lap_number, distance, channel):
     valid = values.notna()
     if not valid.any():
         return np.full(len(distance), np.nan)
-    return np.interp(
-        distance,
+    return interpolate_spatial(
         lap.loc[valid, "Normalized_Dist"],
         values.loc[valid],
+        distance,
     )
 
 
@@ -265,7 +253,7 @@ def main():
         unsafe_allow_html=True,
     )
 
-    data_directory = Path(__file__).resolve().parent.parent / "data"
+    data_directory = Path(__file__).resolve().parents[2] / "data"
     local_files = sorted(data_directory.glob("*.csv"))
     preferred = next(
         (index for index, path in enumerate(local_files) if path.name.startswith("raw_")),
@@ -287,9 +275,14 @@ def main():
             "Minimum lap coverage",
             min_value=0.5,
             max_value=1.0,
-            value=0.9,
+            value=float(config_value("data", "minimum_lap_fraction")),
             step=0.01,
             help="Laps shorter than this fraction of the configured or observed track length are excluded.",
+        )
+        show_dtw = st.checkbox(
+            "Show optional DTW diagnostic",
+            value=False,
+            help="Warps speed-profile features for inspection only; lap time deltas remain distance-aligned.",
         )
 
     if upload is None and local_path is None:
@@ -357,7 +350,11 @@ def main():
     metrics[2].metric("Invalid rows", f"{quality['rows']['invalid_required_data']:,}")
     metrics[3].metric("Circuit length", track_length_display)
 
-    alignment = align_laps(clean_frame, lap_a, lap_b) if lap_b is not None else None
+    alignment = (
+        align_laps(clean_frame, lap_a, lap_b, include_dtw=show_dtw)
+        if lap_b is not None
+        else None
+    )
     tabs = st.tabs(
         (
             "Overview",
@@ -368,6 +365,7 @@ def main():
             "Data quality",
             "Driver comparison",
             "Optimal lap",
+            "Tire analytics",
         )
     )
 
@@ -422,6 +420,61 @@ def main():
                 "The lap-time gap uses recorded elapsed time when available; the plotted "
                 "distance delta is independently estimated from speed and distance."
             )
+            if show_dtw:
+                dtw = alignment["dtw"]
+                diagnostic = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=False,
+                    subplot_titles=(
+                        "Speed traces after DTW warping (diagnostic only)",
+                        "Warped distance mapping",
+                    ),
+                )
+                diagnostic.add_trace(
+                    go.Scatter(
+                        x=dtw["distance_a_m"],
+                        y=dtw["speed_a_kmh"],
+                        name=f"Lap {lap_a:g}",
+                        line={"color": "#00d2ff"},
+                    ),
+                    row=1,
+                    col=1,
+                )
+                diagnostic.add_trace(
+                    go.Scatter(
+                        x=dtw["distance_a_m"],
+                        y=dtw["speed_b_kmh"],
+                        name=f"Lap {lap_b:g} warped",
+                        line={"color": "#ff007f"},
+                    ),
+                    row=1,
+                    col=1,
+                )
+                diagnostic.add_trace(
+                    go.Scatter(
+                        x=dtw["distance_a_m"],
+                        y=dtw["distance_b_m"],
+                        name="Warped distance",
+                        line={"color": "#00ffcc"},
+                    ),
+                    row=2,
+                    col=1,
+                )
+                diagnostic.update_xaxes(title_text="Lap A distance (m)", row=1, col=1)
+                diagnostic.update_xaxes(title_text="Lap A distance (m)", row=2, col=1)
+                diagnostic.update_yaxes(title_text="Speed (km/h)", row=1, col=1)
+                diagnostic.update_yaxes(title_text="Lap B distance (m)", row=2, col=1)
+                diagnostic.update_layout(
+                    template="plotly_dark",
+                    height=600,
+                    title=f"DTW speed-profile diagnostic · path cost {dtw['path_cost']:.1f}",
+                )
+                st.plotly_chart(diagnostic, width="stretch")
+                st.caption(
+                    "DTW aligns speed-profile shape, not corner identity or vehicle position. "
+                    "The distance-based time delta above is unchanged."
+                )
 
     with tabs[1]:
         if alignment is not None:
@@ -682,7 +735,7 @@ def main():
             "Micro-sector length (m)",
             min_value=10,
             max_value=200,
-            value=50,
+            value=int(config_value("analysis", "micro_sector_m")),
             step=10,
             help="Smaller sectors give a finer theoretical combination but are more sensitive to sampling noise.",
         )
@@ -731,14 +784,84 @@ def main():
             )
             st.plotly_chart(figure, width="stretch")
             st.caption(
-                f"Estimates use distance/speed integration over {optimal['common_distance_m']:.0f} m. "
-                "The theoretical lap combines the fastest sector from different laps and is a "
-                "benchmark, not a lap achieved in one run. The best complete lap uses recorded "
-                "elapsed time when available; potential gain compares distance/speed estimates."
+                f"Sector estimates use distance/speed integration over {optimal['common_distance_m']:.0f} m, "
+                "scaled to each lap's recorded duration when available. The theoretical lap combines "
+                "sectors using a dynamic-programming speed-boundary tolerance of "
+                f"{optimal['max_boundary_speed_delta_mps']:.1f} m/s. It remains a theoretical "
+                "benchmark, not a lap achieved in one run."
             )
         except ValueError as exc:
             st.info(str(exc))
 
+    with tabs[8]:
+        tire = tire_metrics(clean_frame)
+        if tire["lap_2_to_25_area_loss_percent"] is None:
+            st.info(tire["unavailable"]["lap_2_to_25_area_change"])
+        else:
+            st.metric(
+                "Observed G-G area change, lap 2 → lap 25",
+                f"{tire['lap_2_to_25_area_loss_percent']:+.1f}%",
+                help="Positive indicates a smaller measured per-lap superellipse area on lap 25; this is not proof of tire degradation.",
+            )
+        if tire["friction_circle_area_g2_by_lap"]:
+            area_frame = pd.DataFrame(
+                [
+                    {"Lap": lap, "Envelope area (G²)": area}
+                    for lap, area in tire["friction_circle_area_g2_by_lap"].items()
+                ]
+            )
+            st.plotly_chart(
+                px.line(
+                    area_frame,
+                    x="Lap",
+                    y="Envelope area (G²)",
+                    markers=True,
+                    title="Observed per-lap G-G superellipse area",
+                ),
+                width="stretch",
+            )
+        if tire["tire_work_integral_by_lap"]:
+            work_frame = pd.DataFrame(
+                [
+                    {"Lap": lap, "Tire-work proxy": value}
+                    for lap, value in tire["tire_work_integral_by_lap"].items()
+                ]
+            )
+            st.plotly_chart(
+                px.line(
+                    work_frame,
+                    x="Lap",
+                    y="Tire-work proxy",
+                    markers=True,
+                    title="Steering × speed × |lateral G| integral by lap",
+                ),
+                width="stretch",
+            )
+        thermal = tire["thermal_gradient"]
+        if thermal is not None:
+            thermal_frame = pd.DataFrame(thermal).replace(
+                [np.inf, -np.inf], np.nan
+            ).dropna()
+            if not thermal_frame.empty:
+                st.plotly_chart(
+                    px.scatter(
+                        thermal_frame,
+                        x="lateral_g",
+                        y="gradient_c",
+                        opacity=0.65,
+                        labels={
+                            "lateral_g": "Lateral G",
+                            "gradient_c": "Inner - outer temperature (°C)",
+                        },
+                        title="Tire thermal gradient vs lateral G",
+                    ),
+                    width="stretch",
+                )
+        if tire["unavailable"]:
+            st.caption(
+                "Unavailable: "
+                + " ".join(tire["unavailable"].values())
+            )
 
 if __name__ == "__main__":
     main()

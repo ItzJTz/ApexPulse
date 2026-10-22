@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.config import config_value
+from src.visualization.style import apply_style
+
 # =========================================================
 # CONFIGURATION & OVERRIDES
 # Set to None to automatically detect and plot the FASTEST lap of the session.
@@ -24,7 +27,10 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
     # 1. Filter out incomplete laps (in-laps / out-laps) using track distance
     lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
     track_max_dist = lap_max_distances.max()
-    valid_laps = lap_max_distances[lap_max_distances >= (track_max_dist * 0.90)].index.tolist()
+    valid_laps = lap_max_distances[
+        lap_max_distances
+        >= (track_max_dist * float(config_value("data", "minimum_lap_fraction")))
+    ].index.tolist()
 
     if not valid_laps:
         print("Error: No complete flying laps found in dataset.")
@@ -69,7 +75,9 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
     long_data = df_lap['G Force Long Corr'].values
     angles = np.arctan2(long_data, lat_data)
 
-    n_exponent = 1.5 
+    n_exponent = float(
+        config_value("tire_analysis", "friction_circle_exponent")
+    )
     max_long_allowed = np.where(long_data >= 0, max_long_accel, np.abs(max_long_decel))
 
     # Superellipse radius math
@@ -89,7 +97,7 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
     trail_brake_score = df_lap.loc[blended_inputs, 'Utilization %'].mean() if blended_inputs.any() else 0.0
 
     # 6. Plotting Architecture
-    plt.style.use('dark_background')
+    apply_style()
     fig, ax = plt.subplots(figsize=(9, 9), facecolor='#0f111a')
     ax.set_facecolor('#161925')
 

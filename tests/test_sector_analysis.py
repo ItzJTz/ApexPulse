@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from src.sector_analysis import _sector_time, analyze_sectors
-from src.telemetry_io import prepare_telemetry_frame
+from src.core.sector_analysis import _sector_time, analyze_sectors
+from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class SectorAnalysisTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class SectorAnalysisTests(unittest.TestCase):
             )
         )
 
-        with patch("src.sector_analysis.load_telemetry", return_value=frame):
+        with patch("src.core.sector_analysis.load_telemetry", return_value=frame):
             with self.assertRaisesRegex(ValueError, "clean_data.csv"):
                 analyze_sectors("clean_data.csv")
 

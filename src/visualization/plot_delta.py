@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.config import config_value
+from src.core.spatial import interpolate_spatial
+from src.visualization.style import apply_style
 # =========================================================
 # CONFIGURATION & OVERRIDES
 # Set to specific lap numbers (e.g., LAP_A = 8, LAP_B = 9) or None for auto-select
@@ -18,7 +21,7 @@ clean_file_path = (
 )
 
 if not os.path.exists(clean_file_path):
-    print("Error: 'clean_data.csv' not found. Run src/clean_telemetry.py first.")
+    print("Error: 'clean_data.csv' not found. Run python -m src.pipeline.clean_telemetry first.")
     exit()
 
 df = pd.read_csv(clean_file_path)
@@ -27,7 +30,8 @@ df = pd.read_csv(clean_file_path)
 lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
 track_max_dist = lap_max_distances.max()
 valid_laps = lap_max_distances[
-    lap_max_distances >= (track_max_dist * 0.90)
+    lap_max_distances
+    >= (track_max_dist * float(config_value("data", "minimum_lap_fraction")))
 ].index.tolist()
 
 if len(valid_laps) < 2:
@@ -42,29 +46,46 @@ df_lapB = df[df['Lap Number'] == lap_B].sort_values(by='Lap Distance')
 
 # 3. 1-Meter Spatial Interpolation
 max_dist = min(df_lapA['Lap Distance'].max(), df_lapB['Lap Distance'].max())
-common_dist = np.arange(0, max_dist, 1.0)
+grid_step = float(config_value("analysis", "spatial_grid_m"))
+min_dist = max(
+    df_lapA['Lap Distance'].min(),
+    df_lapB['Lap Distance'].min(),
+)
+if max_dist <= min_dist:
+    raise ValueError("The selected laps do not have overlapping distance coverage.")
+common_dist = np.arange(min_dist, max_dist, grid_step)
+if len(common_dist) == 0 or common_dist[-1] < max_dist:
+    common_dist = np.append(common_dist, max_dist)
 
 speed_A = (
-    np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Ground Speed'])
+    interpolate_spatial(
+        df_lapA['Lap Distance'], df_lapA['Ground Speed'], common_dist
+    )
     / 3.6
 )
 speed_B = (
-    np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Ground Speed'])
+    interpolate_spatial(
+        df_lapB['Lap Distance'], df_lapB['Ground Speed'], common_dist
+    )
     / 3.6
 )
 
 speed_A = np.maximum(speed_A, 1.0)
 speed_B = np.maximum(speed_B, 1.0)
 
-dt_A = 1.0 / speed_A
-dt_B = 1.0 / speed_B
-
-time_A = np.cumsum(dt_A)
-time_B = np.cumsum(dt_B)
+interval_distances = np.diff(common_dist)
+interval_time_a = interval_distances * (
+    0.5 / speed_A[:-1] + 0.5 / speed_A[1:]
+)
+interval_time_b = interval_distances * (
+    0.5 / speed_B[:-1] + 0.5 / speed_B[1:]
+)
+time_A = np.concatenate(([0.0], np.cumsum(interval_time_a)))
+time_B = np.concatenate(([0.0], np.cumsum(interval_time_b)))
 delta = time_A - time_B  # Positive = Lap B faster
 
 # 4. Pro Telemetry Dark Theme Plot
-plt.style.use('dark_background')
+apply_style()
 fig, ax = plt.subplots(figsize=(13, 6), facecolor='#0f111a')
 ax.set_facecolor('#161925')
 

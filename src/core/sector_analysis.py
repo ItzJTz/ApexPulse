@@ -3,10 +3,9 @@ import json
 from pathlib import Path
 
 import numpy as np
-if __package__:
-    from .telemetry_io import load_telemetry, valid_lap_numbers
-else:
-    from telemetry_io import load_telemetry, valid_lap_numbers
+
+from src.core.spatial import interpolate_spatial
+from src.pipeline.telemetry_io import load_telemetry, valid_lap_numbers
 
 
 def _sector_time(lap, start_distance, end_distance):
@@ -28,7 +27,7 @@ def _sector_time(lap, start_distance, end_distance):
             [end_distance],
         )
     )
-    sector_speed = np.interp(sector_distances, distance, speed_ms)
+    sector_speed = interpolate_spatial(distance, speed_ms, sector_distances)
     intervals = np.diff(sector_distances)
     return float(np.sum(intervals * (0.5 / sector_speed[:-1] + 0.5 / sector_speed[1:])))
 
@@ -44,7 +43,11 @@ def analyze_sectors(clean_file_path="data/raw_telemetrySilverstone.csv", tracks_
         )
 
     track = df["Track"].iloc[0]
-    tracks_path = Path(tracks_dir) if tracks_dir else Path(__file__).resolve().parent.parent / "tracks"
+    tracks_path = (
+        Path(tracks_dir)
+        if tracks_dir
+        else Path(__file__).resolve().parents[2] / "tracks"
+    )
     config_path = tracks_path / f"{track}.json"
     if not config_path.is_file():
         raise FileNotFoundError(f"Track configuration not found: '{config_path}'.")

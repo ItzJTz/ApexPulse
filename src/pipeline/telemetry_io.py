@@ -7,6 +7,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.signal import butter, filtfilt
+
+from src.config import config_value
 
 
 REQUIRED_CHANNELS = ("Lap Number", "Lap Distance", "Ground Speed")
@@ -17,7 +20,11 @@ def _key(value):
 
 
 def _resolve_track(path, metadata, tracks_dir=None):
-    tracks_path = Path(tracks_dir) if tracks_dir else Path(__file__).resolve().parent.parent / "tracks"
+    tracks_path = (
+        Path(tracks_dir)
+        if tracks_dir
+        else Path(__file__).resolve().parents[2] / "tracks"
+    )
     if not tracks_path.is_dir():
         return None
 
@@ -108,6 +115,79 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
     if time_column is not None and time_column != "Time" and "Time" not in df.columns:
         df = df.rename(columns={time_column: "Time"})
 
+    channel_aliases = {
+        "Brake Pressure": ("brakepressure", "brakepress"),
+        "Tire Temp Inner": (
+            "tiretempinner",
+            "tyretempinner",
+            "tiretemperatureinner",
+            "tyretemperatureinner",
+            "innertiretemp",
+            "innertyretemp",
+        ),
+        "Tire Temp Outer": (
+            "tiretempouter",
+            "tyretempouter",
+            "tiretemperatureouter",
+            "tyretemperatureouter",
+            "outertiretemp",
+            "outertyretemp",
+        ),
+    }
+    normalized_current = {_key(column): column for column in df.columns}
+    for canonical, aliases in channel_aliases.items():
+        source_column = next(
+            (normalized_current[alias] for alias in aliases if alias in normalized_current),
+            None,
+        )
+        if source_column is not None and canonical not in df.columns:
+            df = df.rename(columns={source_column: canonical})
+
+    if "Brake Pressure" not in df.columns:
+        pressure_columns = [
+            column
+            for column in df.columns
+            if _key(column).startswith("brakepressure")
+        ]
+        if pressure_columns:
+            df["Brake Pressure"] = df[pressure_columns].apply(
+                pd.to_numeric, errors="coerce"
+            ).mean(axis=1)
+
+    for position in ("FL", "FR", "RL", "RR"):
+        for side, suffixes in (
+            ("Inner", ("inner", "i")),
+            ("Outer", ("outer", "o")),
+        ):
+            canonical = f"Tire Temp {side}"
+            if canonical in df.columns:
+                continue
+            source_column = next(
+                (
+                    column
+                    for column in df.columns
+                    if (
+                        f"tyretemp{position.lower()}" in _key(column)
+                        or f"tiretemp{position.lower()}" in _key(column)
+                        or f"tyrerubbertemp{position.lower()}" in _key(column)
+                    )
+                    and _key(column).endswith(suffixes)
+                ),
+                None,
+            )
+            if source_column is not None:
+                target = f"_{canonical}_{position}"
+                df[target] = pd.to_numeric(df[source_column], errors="coerce")
+    for side in ("Inner", "Outer"):
+        canonical = f"Tire Temp {side}"
+        position_columns = [
+            f"_{canonical}_{position}"
+            for position in ("FL", "FR", "RL", "RR")
+            if f"_{canonical}_{position}" in df.columns
+        ]
+        if canonical not in df.columns and position_columns:
+            df[canonical] = df[position_columns].mean(axis=1)
+
     numeric_columns = ["Lap Number", "Lap Distance", "Ground Speed"]
     for column in ("Distance", "Time"):
         if column in df.columns:
@@ -123,10 +203,14 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
         "G Force Long",
         "GPS Latitude",
         "GPS Longitude",
+        "Brake Pressure",
+        "Tire Temp Inner",
+        "Tire Temp Outer",
     )
     missing_percent = {}
+    normalized_current = {_key(column): column for column in df.columns}
     for channel in optional_channels:
-        source_column = normalized_columns.get(_key(channel))
+        source_column = normalized_current.get(_key(channel))
         if source_column is not None:
             missing_percent[channel] = round(
                 float(pd.to_numeric(df[source_column], errors="coerce").isna().mean() * 100),
@@ -134,10 +218,29 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
             )
 
     df = df.replace([np.inf, -np.inf], np.nan)
+    quarantine = {
+        "speed_outlier_rows": 0,
+        "lateral_g_outlier_samples": 0,
+    }
+    max_speed = float(config_value("quarantine", "max_speed_kmh"))
+    if not math.isfinite(max_speed) or max_speed <= 0:
+        raise ValueError("quarantine.max_speed_kmh must be positive and finite.")
+    invalid_speed = (df["Ground Speed"] < 0) | (df["Ground Speed"] > max_speed)
+    quarantine["speed_outlier_rows"] = int(invalid_speed.sum())
+    df.loc[invalid_speed, "Ground Speed"] = np.nan
     rows_with_valid_required_channels = int(df.dropna(subset=list(REQUIRED_CHANNELS)).shape[0])
     df = df.dropna(subset=list(REQUIRED_CHANNELS)).copy()
     if df.empty:
         raise ValueError("Telemetry contains no rows with valid lap number, lap distance, and speed.")
+
+    lateral_limit = float(config_value("quarantine", "max_lateral_g"))
+    if not math.isfinite(lateral_limit) or lateral_limit <= 0:
+        raise ValueError("quarantine.max_lateral_g must be positive and finite.")
+    if "G Force Lat" in df.columns:
+        lateral_g = pd.to_numeric(df["G Force Lat"], errors="coerce")
+        lateral_outlier = lateral_g.abs() > lateral_limit
+        quarantine["lateral_g_outlier_samples"] = int(lateral_outlier.sum())
+        df.loc[lateral_outlier, "G Force Lat"] = np.nan
 
     df = df.sort_values(["Lap Number", "Lap Distance"], kind="stable")
     repeated_distance_samples = int(
@@ -163,6 +266,7 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
         "required_channel_mapping": source_columns,
         "optional_channel_missing_percent": missing_percent,
         "detected_track": track,
+        "outlier_quarantine": quarantine,
     }
     return df.reset_index(drop=True)
 
@@ -221,15 +325,28 @@ def load_telemetry(path, tracks_dir=None):
     return _load_telemetry_text(text, str(path), tracks_dir)
 
 
-def process_session(frame, minimum_fraction=0.9):
+def process_session(
+    frame,
+    minimum_fraction=None,
+    rolling_median_window=None,
+):
     """Filter incomplete laps, smooth speed, and build a reproducible QC report."""
+    minimum_fraction = (
+        float(config_value("data", "minimum_lap_fraction"))
+        if minimum_fraction is None
+        else minimum_fraction
+    )
     if not 0 < minimum_fraction <= 1:
         raise ValueError("minimum_fraction must be greater than 0 and at most 1.")
     quality = dict(frame.attrs.get("quality", {}))
     track_name = frame["Track"].iloc[0] if "Track" in frame.columns else None
     track_length = None
     if track_name:
-        config_path = Path(__file__).resolve().parent.parent / "tracks" / f"{track_name}.json"
+        config_path = (
+            Path(__file__).resolve().parents[2]
+            / "tracks"
+            / f"{track_name}.json"
+        )
         if config_path.is_file():
             try:
                 track_length = json.loads(config_path.read_text(encoding="utf-8")).get(
@@ -243,16 +360,30 @@ def process_session(frame, minimum_fraction=0.9):
     threshold = reference_length * minimum_fraction
     valid_laps = lap_lengths[lap_lengths >= threshold].index.tolist()
     invalid_laps = lap_lengths[~lap_lengths.index.isin(valid_laps)].index.tolist()
-    result = frame[frame["Lap Number"].isin(valid_laps)].copy()
+    result = frame[frame["Lap Number"].isin(valid_laps)].copy().reset_index(drop=True)
     if result.empty:
         raise ValueError(
             f"No laps cover at least {minimum_fraction:.0%} of the reference distance "
             f"({reference_length:.1f} m)."
         )
 
-    result["Ground Speed"] = result.groupby("Lap Number")["Ground Speed"].transform(
-        lambda speed: speed.rolling(window=3, center=True, min_periods=1).median()
+    median_window = int(
+        config_value("signal_filter", "rolling_median_window")
+        if rolling_median_window is None
+        else rolling_median_window
     )
+    if median_window < 1:
+        raise ValueError(
+            "signal_filter.rolling_median_window must be a positive integer."
+        )
+    result["Ground Speed"] = result.groupby("Lap Number")["Ground Speed"].transform(
+        lambda speed: speed.rolling(
+            window=median_window,
+            center=True,
+            min_periods=1,
+        ).median()
+    )
+    filter_report = _filter_noise_channels(result)
     result.attrs["quality"] = quality
     fastest_laps = fastest_lap_numbers(result, count=2)
     report = {
@@ -268,6 +399,16 @@ def process_session(frame, minimum_fraction=0.9):
             "repeated_distance_samples": quality.get("repeated_distance_samples", 0),
             "canonical": len(frame),
             "after_lap_filter": len(result),
+            "speed_outlier_quarantined": quality.get(
+                "outlier_quarantine", {}
+            ).get("speed_outlier_rows", 0),
+            "lateral_g_outlier_quarantined": quality.get(
+                "outlier_quarantine", {}
+            ).get("lateral_g_outlier_samples", 0),
+        },
+        "signal_filter": {
+            **filter_report,
+            "rolling_median_window": median_window,
         },
         "channels": {
             "required_mapping": quality.get("required_channel_mapping", {}),
@@ -296,7 +437,99 @@ def process_session(frame, minimum_fraction=0.9):
     return result.reset_index(drop=True), report
 
 
-def valid_lap_numbers(frame, minimum_fraction=0.9, track_length=None):
+def _filter_noise_channels(frame):
+    config = config_value("signal_filter", "enabled")
+    if not config:
+        return {"enabled": False, "skipped": "disabled in config"}
+
+    order = int(config_value("signal_filter", "order"))
+    cutoff_hz = float(config_value("signal_filter", "cutoff_hz"))
+    if order < 1 or not math.isfinite(cutoff_hz) or cutoff_hz <= 0:
+        raise ValueError("Signal-filter order and cutoff must be positive and finite.")
+    report = {"enabled": True, "order": order, "cutoff_hz": cutoff_hz, "laps": {}}
+    channels = [
+        channel
+        for channel in frame.columns
+        if channel == "G Force Lat" or _key(channel).startswith("brakepressure")
+    ]
+    if not channels:
+        report["skipped"] = "no lateral-G or brake-pressure channel is available"
+        return report
+    for channel in channels:
+        frame[channel] = pd.to_numeric(frame[channel], errors="coerce").astype(float)
+    if "Time" not in frame.columns:
+        report["skipped"] = "elapsed-time channel is required to infer the sample rate"
+        return report
+
+    for lap_number, lap in frame.groupby("Lap Number", sort=False):
+        times = pd.to_numeric(lap["Time"], errors="coerce").to_numpy(dtype=float)
+        positive_deltas = np.diff(times)
+        positive_deltas = positive_deltas[
+            np.isfinite(positive_deltas) & (positive_deltas > 0)
+        ]
+        if not len(positive_deltas):
+            report["laps"][str(lap_number)] = {
+                "skipped": "no positive elapsed-time intervals"
+            }
+            continue
+        sample_rate = 1.0 / float(np.median(positive_deltas))
+        lap_report = {"sample_rate_hz": sample_rate, "channels": {}}
+        if cutoff_hz >= sample_rate / 2:
+            lap_report["skipped"] = (
+                f"cutoff {cutoff_hz:g} Hz must be below Nyquist "
+                f"({sample_rate / 2:g} Hz)"
+            )
+            report["laps"][str(lap_number)] = lap_report
+            continue
+
+        numerator, denominator = butter(
+            order,
+            cutoff_hz,
+            btype="lowpass",
+            fs=sample_rate,
+        )
+        pad_length = 3 * max(len(numerator), len(denominator))
+        for channel in channels:
+            values = pd.to_numeric(lap[channel], errors="coerce").to_numpy(
+                dtype=float,
+                copy=True,
+            )
+            finite = np.isfinite(values)
+            segments = _finite_segments(finite)
+            filtered_segments = 0
+            for start, stop in segments:
+                if stop - start <= pad_length:
+                    continue
+                values[start:stop] = filtfilt(
+                    numerator,
+                    denominator,
+                    values[start:stop],
+                    padlen=pad_length,
+                )
+                filtered_segments += 1
+            frame.loc[lap.index, channel] = values
+            lap_report["channels"][channel] = {
+                "filtered_segments": int(filtered_segments),
+                "skipped_short_segments": int(
+                    sum(stop - start <= pad_length for start, stop in segments)
+                ),
+            }
+        report["laps"][str(lap_number)] = lap_report
+    return report
+
+
+def _finite_segments(mask):
+    padded = np.concatenate(([False], mask, [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return list(zip(changes[::2], changes[1::2]))
+
+
+def valid_lap_numbers(frame, minimum_fraction=None, track_length=None):
+    minimum_fraction = (
+        float(config_value("data", "minimum_lap_fraction"))
+        if minimum_fraction is None
+        else minimum_fraction
+    )
     if not 0 < minimum_fraction <= 1:
         raise ValueError("minimum_fraction must be greater than 0 and at most 1.")
     lap_lengths = frame.groupby("Lap Number")["Normalized_Dist"].max()
@@ -333,7 +566,7 @@ def lap_time_source(lap):
     return "estimated_from_distance_and_speed"
 
 
-def fastest_lap_numbers(frame, count=2, minimum_fraction=0.9, track_length=None):
+def fastest_lap_numbers(frame, count=2, minimum_fraction=None, track_length=None):
     valid = valid_lap_numbers(frame, minimum_fraction, track_length)
     times = {
         lap_number: lap_time_seconds(frame[frame["Lap Number"] == lap_number])

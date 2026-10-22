@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.config import config_value
+from src.core.spatial import interpolate_spatial
+from src.visualization.style import apply_style
 # =========================================================
 # CONFIGURATION & OVERRIDES
 LAP_A = None
@@ -26,7 +29,8 @@ df = pd.read_csv(clean_file_path)
 lap_max_distances = df.groupby('Lap Number')['Lap Distance'].max()
 track_max_dist = lap_max_distances.max()
 valid_laps = lap_max_distances[
-    lap_max_distances >= (track_max_dist * 0.90)
+    lap_max_distances
+    >= (track_max_dist * float(config_value("data", "minimum_lap_fraction")))
 ].index.tolist()
 
 if len(valid_laps) < 2:
@@ -51,25 +55,34 @@ for col in channels_to_smooth:
 
 # 4. Interpolate onto 1-meter spatial grid
 max_common_dist = min(df_lapA['Lap Distance'].max(), df_lapB['Lap Distance'].max())
-common_dist = np.arange(0, max_common_dist, 1.0)
+min_common_dist = max(
+    df_lapA['Lap Distance'].min(),
+    df_lapB['Lap Distance'].min(),
+)
+if max_common_dist <= min_common_dist:
+    raise ValueError("The selected laps do not have overlapping distance coverage.")
+grid_step = float(config_value("analysis", "spatial_grid_m"))
+common_dist = np.arange(min_common_dist, max_common_dist, grid_step)
+if len(common_dist) == 0 or common_dist[-1] < max_common_dist:
+    common_dist = np.append(common_dist, max_common_dist)
 
-speed_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Ground Speed'])
-speed_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Ground Speed'])
-throttle_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Throttle Pos'])
-throttle_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Throttle Pos'])
-brake_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Brake Pos'])
-brake_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Brake Pos'])
+speed_A = interpolate_spatial(df_lapA['Lap Distance'], df_lapA['Ground Speed'], common_dist)
+speed_B = interpolate_spatial(df_lapB['Lap Distance'], df_lapB['Ground Speed'], common_dist)
+throttle_A = interpolate_spatial(df_lapA['Lap Distance'], df_lapA['Throttle Pos'], common_dist)
+throttle_B = interpolate_spatial(df_lapB['Lap Distance'], df_lapB['Throttle Pos'], common_dist)
+brake_A = interpolate_spatial(df_lapA['Lap Distance'], df_lapA['Brake Pos'], common_dist)
+brake_B = interpolate_spatial(df_lapB['Lap Distance'], df_lapB['Brake Pos'], common_dist)
 
 has_steering = 'Steering' in df.columns
 if has_steering:
-    steer_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['Steering'])
-    steer_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['Steering'])
+    steer_A = interpolate_spatial(df_lapA['Lap Distance'], df_lapA['Steering'], common_dist)
+    steer_B = interpolate_spatial(df_lapB['Lap Distance'], df_lapB['Steering'], common_dist)
 else:
-    lat_g_A = np.interp(common_dist, df_lapA['Lap Distance'], df_lapA['G Force Lat'])
-    lat_g_B = np.interp(common_dist, df_lapB['Lap Distance'], df_lapB['G Force Lat'])
+    lat_g_A = interpolate_spatial(df_lapA['Lap Distance'], df_lapA['G Force Lat'], common_dist)
+    lat_g_B = interpolate_spatial(df_lapB['Lap Distance'], df_lapB['G Force Lat'], common_dist)
 
 # 5. Render Multi-Channel Dark Theme Plot
-plt.style.use('dark_background')
+apply_style()
 fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 10), sharex=True, facecolor='#0f111a')
 
 color_A = '#00d2ff'
