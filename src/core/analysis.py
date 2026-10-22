@@ -431,8 +431,8 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
                 str(lap): area
                 for lap, area in tire["friction_circle_area_g2_by_lap"].items()
             },
-            "lap_2_to_25_area_loss_percent": tire[
-                "lap_2_to_25_area_loss_percent"
+            "friction_circle_area_comparison": tire[
+                "friction_circle_area_comparison"
             ],
             "tire_work_integral_by_lap": {
                 str(lap): value

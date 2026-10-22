@@ -795,13 +795,22 @@ def main():
 
     with tabs[8]:
         tire = tire_metrics(clean_frame)
-        if tire["lap_2_to_25_area_loss_percent"] is None:
-            st.info(tire["unavailable"]["lap_2_to_25_area_change"])
+        area_comparison = tire["friction_circle_area_comparison"]
+        if area_comparison is None:
+            message = tire["unavailable"].get(
+                "friction_circle_area_comparison",
+                "No G-G area comparison is available for this session.",
+            )
+            st.info(message)
         else:
             st.metric(
-                "Observed G-G area change, lap 2 → lap 25",
-                f"{tire['lap_2_to_25_area_loss_percent']:+.1f}%",
-                help="Positive indicates a smaller measured per-lap superellipse area on lap 25; this is not proof of tire degradation.",
+                (
+                    "Observed G-G area change · "
+                    f"Lap {area_comparison['baseline_lap']:g} → "
+                    f"Lap {area_comparison['compare_lap']:g}"
+                ),
+                f"{area_comparison['change_percent']:+.1f}%",
+                help="Positive indicates a larger measured per-lap superellipse area; negative indicates a smaller area. Area change alone does not establish tire degradation.",
             )
         if tire["friction_circle_area_g2_by_lap"]:
             area_frame = pd.DataFrame(

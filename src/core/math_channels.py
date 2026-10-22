@@ -127,16 +127,53 @@ def tire_metrics(frame):
             "Steering, speed, lateral G, and lap distance channels are required."
         )
 
-    area_loss = None
-    if 2.0 in areas and 25.0 in areas and areas[2.0] > 0:
-        area_loss = float((areas[2.0] - areas[25.0]) / areas[2.0] * 100)
+    area_comparison = None
+    if areas:
+        available_laps = sorted(areas)
+        configured_baseline = config_value("tire_analysis", "baseline_lap")
+        configured_compare = config_value("tire_analysis", "compare_lap")
+        baseline_lap = (
+            available_laps[0]
+            if configured_baseline is None
+            else float(configured_baseline)
+        )
+        compare_lap = (
+            available_laps[-1]
+            if configured_compare is None
+            else float(configured_compare)
+        )
+        missing_laps = [
+            lap
+            for lap in (baseline_lap, compare_lap)
+            if lap not in areas
+        ]
+        if missing_laps:
+            unavailable["friction_circle_area_comparison"] = (
+                "Configured G-G comparison lap(s) are unavailable: "
+                + ", ".join(f"{lap:g}" for lap in missing_laps)
+                + f". Available laps: {', '.join(f'{lap:g}' for lap in available_laps)}."
+            )
+        elif areas[baseline_lap] <= 0:
+            unavailable["friction_circle_area_comparison"] = (
+                f"Baseline lap {baseline_lap:g} has no positive G-G envelope area."
+            )
+        else:
+            area_comparison = {
+                "baseline_lap": baseline_lap,
+                "compare_lap": compare_lap,
+                "change_percent": float(
+                    (areas[compare_lap] - areas[baseline_lap])
+                    / areas[baseline_lap]
+                    * 100
+                ),
+            }
     else:
-        unavailable["lap_2_to_25_area_change"] = (
-            "Valid G-G data for both lap 2 and lap 25 are required."
+        unavailable["friction_circle_area_comparison"] = (
+            "No valid per-lap G-G envelope areas are available."
         )
     return {
         "friction_circle_area_g2_by_lap": areas,
-        "lap_2_to_25_area_loss_percent": area_loss,
+        "friction_circle_area_comparison": area_comparison,
         "tire_work_integral_by_lap": work,
         "thermal_gradient": thermal,
         "unavailable": unavailable,
@@ -187,9 +224,12 @@ def generate_math_channels(csv_path="data/clean_data.csv"):
     df["Math_TireWorkIntegral"] = tire_summary[
         "tire_work_integral_by_lap"
     ].get(selected_lap, np.nan)
-    df["Math_FrictionCircleAreaLoss_Lap2_to_25_Pct"] = tire_summary[
-        "lap_2_to_25_area_loss_percent"
-    ]
+    area_comparison = tire_summary["friction_circle_area_comparison"]
+    df["Math_FrictionCircleAreaChange_Pct"] = (
+        area_comparison["change_percent"]
+        if area_comparison is not None
+        else np.nan
+    )
 
     # Save cleaned CSV with math channels
     df.to_csv("data/data_with_math_channels.csv", index=False)

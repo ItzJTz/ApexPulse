@@ -18,6 +18,8 @@ quarantine:
 
 tire_analysis:
   friction_circle_exponent: 1.5
+  baseline_lap: null
+  compare_lap: null
 
 vehicle:
   aero_downforce_mult: 0.85

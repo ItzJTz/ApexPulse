@@ -118,7 +118,7 @@ Then follow these steps:
    * **Data quality:** included/excluded laps, dropped/duplicate rows, optional-channel completeness, and downloads for the cleaned CSV and JSON report.
    * **Driver comparison:** upload a second session to compare its fastest complete lap with the fastest complete lap from the main session. Both files should be from the same circuit and use compatible distance units. If track metadata is missing, confirm this manually in the tab.
    * **Optimal lap:** uses dynamic programming to choose the fastest micro-sector combination within the configured seam-speed tolerance. It remains a theoretical benchmark assembled from different laps, not a full vehicle simulation.
-   * **Tire analytics:** plots inner-minus-outer temperature against lateral G and reports per-lap G-G envelope area and steering-speed-lateral-G integral when those input channels are available. Lap 2-to-25 area change is an observed change, not proof of tire degradation.
+   * **Tire analytics:** plots inner-minus-outer temperature against lateral G and reports per-lap G-G envelope area and steering-speed-lateral-G integral when those input channels are available. G-G area change defaults to the first and last valid laps; optional `tire_analysis.baseline_lap` and `tire_analysis.compare_lap` settings select specific available laps. Area change alone does not prove tire degradation.
 
 5. Use the data-quality tab to check which laps and samples were retained before interpreting comparisons or downloading the cleaned data and report.
 

@@ -54,7 +54,7 @@ class TireMetricsTests(unittest.TestCase):
         frame = prepare_telemetry_frame(
             pd.DataFrame(
                 {
-                    "Lap Number": [2] * 4 + [25] * 4,
+                    "Lap Number": [4] * 4 + [9] * 4,
                     "Lap Distance": [0, 10, 20, 30] * 2,
                     "Ground Speed": [36] * 8,
                     "Steering": [0, 1, -1, 0] * 2,
@@ -75,13 +75,85 @@ class TireMetricsTests(unittest.TestCase):
             )
         )
 
-        result = tire_metrics(frame)
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "friction_circle_exponent": 1.5,
+                "baseline_lap": None,
+                "compare_lap": None,
+            }[key],
+        ):
+            result = tire_metrics(frame)
 
-        self.assertIsNotNone(result["lap_2_to_25_area_loss_percent"])
-        self.assertGreater(result["lap_2_to_25_area_loss_percent"], 0)
-        self.assertTrue(result["tire_work_integral_by_lap"][2.0] > 0)
+        comparison = result["friction_circle_area_comparison"]
+        self.assertEqual(comparison["baseline_lap"], 4.0)
+        self.assertEqual(comparison["compare_lap"], 9.0)
+        self.assertLess(comparison["change_percent"], 0)
+        self.assertTrue(result["tire_work_integral_by_lap"][4.0] > 0)
         self.assertTrue(result["thermal_gradient"]["gradient_c"].tolist() == [10] * 8)
-        self.assertIn(2.0, result["friction_circle_area_g2_by_lap"])
+        self.assertIn(4.0, result["friction_circle_area_g2_by_lap"])
+
+    def test_configured_tire_area_comparison_laps_override_defaults(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * 4 + [4] * 4 + [9] * 4,
+                    "Lap Distance": [0, 10, 20, 30] * 3,
+                    "Ground Speed": [36] * 12,
+                    "G Force Lat": [0, 1, -1, 0] * 3,
+                    "G Force Long": [-1, 0.2, 0.2, -1] * 3,
+                }
+            )
+        )
+
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "friction_circle_exponent": 1.5,
+                "baseline_lap": 4,
+                "compare_lap": 9,
+            }[key],
+        ):
+            result = tire_metrics(frame)
+
+        comparison = result["friction_circle_area_comparison"]
+        self.assertEqual(comparison["baseline_lap"], 4.0)
+        self.assertEqual(comparison["compare_lap"], 9.0)
+
+    def test_single_valid_area_lap_compares_to_itself(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [7] * 4,
+                    "Lap Distance": [0, 10, 20, 30],
+                    "Ground Speed": [36] * 4,
+                    "G Force Lat": [0, 1, -1, 0],
+                    "G Force Long": [-1, 0.2, 0.2, -1],
+                }
+            )
+        )
+
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "friction_circle_exponent": 1.5,
+                "baseline_lap": None,
+                "compare_lap": None,
+            }[key],
+        ):
+            result = tire_metrics(frame)
+
+        self.assertEqual(
+            result["friction_circle_area_comparison"],
+            {
+                "baseline_lap": 7.0,
+                "compare_lap": 7.0,
+                "change_percent": 0.0,
+            },
+        )
 
     def test_reports_missing_channels_instead_of_inventing_tire_metrics(self):
         frame = prepare_telemetry_frame(
@@ -94,11 +166,21 @@ class TireMetricsTests(unittest.TestCase):
             )
         )
 
-        result = tire_metrics(frame)
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "friction_circle_exponent": 1.5,
+                "baseline_lap": None,
+                "compare_lap": None,
+            }[key],
+        ):
+            result = tire_metrics(frame)
 
-        self.assertIsNone(result["lap_2_to_25_area_loss_percent"])
+        self.assertIsNone(result["friction_circle_area_comparison"])
         self.assertIn("thermal_gradient", result["unavailable"])
         self.assertIn("friction_circle_area", result["unavailable"])
+        self.assertIn("friction_circle_area_comparison", result["unavailable"])
         self.assertIn("tire_work_integral", result["unavailable"])
 
 
