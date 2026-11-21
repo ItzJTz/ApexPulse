@@ -157,7 +157,62 @@ def _gg_figure(lap):
     return figure
 
 
-def _track_figure(lap):
+def _add_corner_markers(figure, distance, x, y, corners):
+    if not corners:
+        return
+    points = pd.DataFrame(
+        {
+            "distance": pd.to_numeric(pd.Series(distance), errors="coerce"),
+            "x": pd.to_numeric(pd.Series(x), errors="coerce"),
+            "y": pd.to_numeric(pd.Series(y), errors="coerce"),
+        }
+    ).replace([np.inf, -np.inf], np.nan).dropna()
+    points = (
+        points.groupby("distance", as_index=False)[["x", "y"]]
+        .mean()
+        .sort_values("distance")
+    )
+    if len(points) < 2:
+        return
+
+    distances = []
+    selected_corners = []
+    minimum_distance = points["distance"].iloc[0]
+    maximum_distance = points["distance"].iloc[-1]
+    for corner in corners:
+        apex_distance = float(corner["apex_m"])
+        if minimum_distance <= apex_distance <= maximum_distance:
+            distances.append(apex_distance)
+            selected_corners.append(corner)
+    if not selected_corners:
+        return
+
+    figure.add_trace(
+        go.Scatter(
+            x=np.interp(distances, points["distance"], points["x"]),
+            y=np.interp(distances, points["distance"], points["y"]),
+            mode="markers+text",
+            name="Corners",
+            text=[corner["id"] for corner in selected_corners],
+            textposition="top center",
+            customdata=[
+                [corner["name"], distance]
+                for corner, distance in zip(selected_corners, distances)
+            ],
+            marker={
+                "size": 9,
+                "color": "#00d2ff",
+                "line": {"color": "#0e1117", "width": 1},
+            },
+            hovertemplate=(
+                "%{text} · %{customdata[0]}<br>"
+                "Approx. apex: %{customdata[1]:.0f} m<extra></extra>"
+            ),
+        )
+    )
+
+
+def _track_figure(lap, corner_metadata=None):
     speed = lap["Ground Speed"].to_numpy(dtype=float)
     latitude = (
         pd.to_numeric(lap["GPS Latitude"], errors="coerce")
@@ -197,7 +252,54 @@ def _track_figure(lap):
                 yaxis_title="Latitude",
                 yaxis={"scaleanchor": "x", "scaleratio": 1},
             )
+            _add_corner_markers(
+                figure,
+                gps["Normalized_Dist"],
+                gps["_longitude"],
+                gps["_latitude"],
+                corner_metadata,
+            )
             return figure, "Logged GPS coordinates"
+
+    if "Car Coord X" in lap and "Car Coord Y" in lap:
+        coordinates = lap.assign(
+            _x=pd.to_numeric(lap["Car Coord X"], errors="coerce"),
+            _y=pd.to_numeric(lap["Car Coord Y"], errors="coerce"),
+        )
+        coordinates[["_x", "_y"]] = coordinates[["_x", "_y"]].replace(
+            [np.inf, -np.inf], np.nan
+        )
+        coordinates = coordinates.dropna(subset=["_x", "_y"])
+        if (
+            len(coordinates) >= 3
+            and coordinates[["_x", "_y"]].drop_duplicates().shape[0] >= 3
+            and coordinates["_x"].std() > 1e-6
+            and coordinates["_y"].std() > 1e-6
+        ):
+            figure = px.scatter(
+                coordinates,
+                x="_x",
+                y="_y",
+                color="Ground Speed",
+                color_continuous_scale="Magma",
+                hover_data=["Normalized_Dist", "Ground Speed"],
+                title="Logged vehicle coordinates (not surveyed geometry)",
+            )
+            figure.update_traces(mode="lines+markers", marker={"size": 4})
+            figure.update_layout(
+                template="plotly_dark",
+                xaxis_title="Car coordinate X (m)",
+                yaxis_title="Car coordinate Y (m)",
+                yaxis={"scaleanchor": "x", "scaleratio": 1},
+            )
+            _add_corner_markers(
+                figure,
+                coordinates["Normalized_Dist"],
+                coordinates["_x"],
+                coordinates["_y"],
+                corner_metadata,
+            )
+            return figure, "Logged vehicle coordinates"
 
     if "G Force Lat" not in lap or lap["G Force Lat"].isna().all():
         return None, "No usable GPS position or lateral-acceleration channel"
@@ -235,6 +337,7 @@ def _track_figure(lap):
         yaxis_title="Relative Y (m)",
         yaxis={"scaleanchor": "x", "scaleratio": 1},
     )
+    _add_corner_markers(figure, distance, x, y, corner_metadata)
     return figure, "Approximate reconstruction from lateral acceleration"
 
 
@@ -513,11 +616,18 @@ def main():
 
     with tabs[3]:
         map_lap = clean_frame[clean_frame["Lap Number"] == lap_a] if lap_a is not None else clean_frame.iloc[0:0]
-        track_figure, method = _track_figure(map_lap)
+        map_config = load_track_config(clean_frame)
+        corner_metadata = map_config.get("corner_metadata", []) if map_config else []
+        track_figure, method = _track_figure(map_lap, corner_metadata)
         if track_figure is None:
             st.info(method)
         else:
             st.caption(method)
+            if corner_metadata:
+                st.caption(
+                    "Turn markers show approximate apex distances from published layouts; "
+                    "verify their positions against telemetry before using them as exact gates."
+                )
             st.plotly_chart(track_figure, width="stretch")
 
     with tabs[4]:
@@ -528,13 +638,29 @@ def main():
             st.info("No matching track configuration is available for sector analysis.")
         else:
             sectors = sector_results(clean_frame, lap_a, lap_b, config)
+            corner_sectors = {
+                f"{corner['id']} {corner['name']}": [
+                    corner["start_m"],
+                    corner["end_m"],
+                ]
+                for corner in config.get("corner_metadata", [])
+            }
+            if corner_sectors:
+                sectors.extend(
+                    sector_results(
+                        clean_frame,
+                        lap_a,
+                        lap_b,
+                        {"sectors": corner_sectors},
+                    )
+                )
             available_sectors = [sector for sector in sectors if sector["available"]]
             if available_sectors:
                 st.dataframe(
                     pd.DataFrame(
                         [
                             {
-                                "Sector": sector["sector"],
+                                "Sector / corner": sector["sector"],
                                 f"Lap {lap_a:g} V-min (km/h)": sector["lap_a_v_min_kmh"],
                                 f"Lap {lap_b:g} V-min (km/h)": sector["lap_b_v_min_kmh"],
                                 "V-min delta (km/h)": sector["v_min_delta_kmh"],
@@ -548,7 +674,10 @@ def main():
                     hide_index=True,
                     width="stretch",
                 )
-                st.caption("Sector timings are estimates integrated over the configured distance gates.")
+                st.caption(
+                    "Sector and corner timings are estimates integrated over distance gates; "
+                    "corner gates from published layouts are approximate."
+                )
             else:
                 st.info("The selected laps do not cover the configured sector gates.")
 

@@ -116,6 +116,9 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
         df = df.rename(columns={time_column: "Time"})
 
     channel_aliases = {
+        "Steering": ("steeringangle",),
+        "G Force Lat": ("cgaccellateral",),
+        "G Force Long": ("cgaccellongitudinal",),
         "Brake Pressure": ("brakepressure", "brakepress"),
         "Tire Temp Inner": (
             "tiretempinner",
@@ -167,11 +170,20 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
                     column
                     for column in df.columns
                     if (
-                        f"tyretemp{position.lower()}" in _key(column)
-                        or f"tiretemp{position.lower()}" in _key(column)
-                        or f"tyrerubbertemp{position.lower()}" in _key(column)
+                        (
+                            (
+                                f"tyretemp{position.lower()}" in _key(column)
+                                or f"tiretemp{position.lower()}" in _key(column)
+                                or f"tyrerubbertemp{position.lower()}" in _key(column)
+                            )
+                            and _key(column).endswith(suffixes)
+                        )
+                        or _key(column)
+                        in (
+                            f"tiretemp{side.lower()}{position.lower()}",
+                            f"tyretemp{side.lower()}{position.lower()}",
+                        )
                     )
-                    and _key(column).endswith(suffixes)
                 ),
                 None,
             )

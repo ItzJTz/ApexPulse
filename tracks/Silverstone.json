@@ -1,10 +1,31 @@
 {
   "circuit_name": "Silverstone GP",
   "total_length_m": 5891,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1 (Copse)": [300, 700],
     "Turn 3-4 (Maggotts/Becketts)": [1000, 1600],
     "Turn 9 (Stowe)": [2600, 3100],
     "Turn 11 (Club)": [3800, 4400]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Copse", "start_m": 300, "apex_m": 400, "end_m": 500 },
+    { "id": "T2", "name": "Maggotts", "start_m": 900, "apex_m": 1000, "end_m": 1100 },
+    { "id": "T3", "name": "Maggotts", "start_m": 1050, "apex_m": 1150, "end_m": 1250 },
+    { "id": "T4", "name": "Becketts", "start_m": 1210, "apex_m": 1310, "end_m": 1410 },
+    { "id": "T5", "name": "Becketts", "start_m": 1370, "apex_m": 1470, "end_m": 1570 },
+    { "id": "T6", "name": "Chapel", "start_m": 1510, "apex_m": 1610, "end_m": 1710 },
+    { "id": "T7", "name": "Stowe", "start_m": 2480, "apex_m": 2580, "end_m": 2680 },
+    { "id": "T8", "name": "Vale", "start_m": 2910, "apex_m": 3010, "end_m": 3110 },
+    { "id": "T9", "name": "Club", "start_m": 3210, "apex_m": 3310, "end_m": 3410 },
+    { "id": "T10", "name": "Abbey", "start_m": 3750, "apex_m": 3850, "end_m": 3950 },
+    { "id": "T11", "name": "Farm", "start_m": 3930, "apex_m": 4030, "end_m": 4130 },
+    { "id": "T12", "name": "Village", "start_m": 4220, "apex_m": 4320, "end_m": 4420 },
+    { "id": "T13", "name": "The Loop", "start_m": 4380, "apex_m": 4480, "end_m": 4580 },
+    { "id": "T14", "name": "Aintree", "start_m": 4570, "apex_m": 4670, "end_m": 4770 },
+    { "id": "T15", "name": "Brooklands", "start_m": 4880, "apex_m": 4980, "end_m": 5080 },
+    { "id": "T16", "name": "Luffield", "start_m": 5150, "apex_m": 5250, "end_m": 5350 },
+    { "id": "T17", "name": "Woodcote", "start_m": 5390, "apex_m": 5490, "end_m": 5590 },
+    { "id": "T18", "name": "Turn 18", "start_m": 5660, "apex_m": 5760, "end_m": 5860 }
+  ]
 }

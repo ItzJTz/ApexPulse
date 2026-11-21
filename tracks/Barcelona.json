@@ -1,11 +1,30 @@
 {
   "circuit_name": "Circuit de Barcelona-Catalunya",
   "total_length_m": 4675,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1-2 (Elf Chicane)": [300, 750],
     "Turn 4 (Repsol)": [1200, 1550],
     "Turn 9 (Campsa)": [2600, 2900],
     "Turn 10 (La Caixa)": [3100, 3450],
     "Turn 13-14 (Final Sector / New Layout)": [4000, 4500]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Elf", "start_m": 300, "apex_m": 370, "end_m": 460 },
+    { "id": "T2", "name": "Turn 2", "start_m": 470, "apex_m": 540, "end_m": 620 },
+    { "id": "T3", "name": "Turn 3", "start_m": 620, "apex_m": 700, "end_m": 790 },
+    { "id": "T4", "name": "Repsol", "start_m": 1220, "apex_m": 1320, "end_m": 1420 },
+    { "id": "T5", "name": "Seat", "start_m": 1540, "apex_m": 1640, "end_m": 1740 },
+    { "id": "T6", "name": "Turn 6", "start_m": 1780, "apex_m": 1870, "end_m": 1960 },
+    { "id": "T7", "name": "Turn 7", "start_m": 2070, "apex_m": 2170, "end_m": 2270 },
+    { "id": "T8", "name": "Turn 8", "start_m": 2350, "apex_m": 2450, "end_m": 2540 },
+    { "id": "T9", "name": "Campsa", "start_m": 2630, "apex_m": 2740, "end_m": 2850 },
+    { "id": "T10", "name": "La Caixa", "start_m": 3080, "apex_m": 3210, "end_m": 3340 },
+    { "id": "T11", "name": "Turn 11", "start_m": 3440, "apex_m": 3520, "end_m": 3600 },
+    { "id": "T12", "name": "Turn 12", "start_m": 3700, "apex_m": 3800, "end_m": 3900 },
+    { "id": "T13", "name": "Turn 13", "start_m": 3970, "apex_m": 4070, "end_m": 4170 },
+    { "id": "T14", "name": "Turn 14", "start_m": 4180, "apex_m": 4280, "end_m": 4380 },
+    { "id": "T15", "name": "Turn 15", "start_m": 4370, "apex_m": 4470, "end_m": 4570 },
+    { "id": "T16", "name": "New Holland", "start_m": 4550, "apex_m": 4620, "end_m": 4670 }
+  ]
 }

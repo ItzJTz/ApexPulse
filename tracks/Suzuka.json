@@ -1,11 +1,32 @@
 {
   "circuit_name": "Suzuka Circuit",
   "total_length_m": 5807,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1-2 (First Corner / Dunlop)": [150, 550],
     "Turn 3-6 (The Esses)": [750, 1400],
     "Turn 11 (Degner Curve)": [2400, 2800],
     "Turn 13-14 (Spoon Curve)": [3800, 4300],
     "Turn 16-17 (130R & Casio Triangle)": [5000, 5600]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "First Curve", "start_m": 130, "apex_m": 240, "end_m": 350 },
+    { "id": "T2", "name": "First Curve exit", "start_m": 320, "apex_m": 430, "end_m": 540 },
+    { "id": "T3", "name": "S Curves", "start_m": 650, "apex_m": 760, "end_m": 870 },
+    { "id": "T4", "name": "S Curves", "start_m": 800, "apex_m": 910, "end_m": 1020 },
+    { "id": "T5", "name": "S Curves", "start_m": 950, "apex_m": 1060, "end_m": 1170 },
+    { "id": "T6", "name": "S Curves", "start_m": 1100, "apex_m": 1210, "end_m": 1320 },
+    { "id": "T7", "name": "Dunlop", "start_m": 1450, "apex_m": 1560, "end_m": 1670 },
+    { "id": "T8", "name": "Degner 1", "start_m": 2110, "apex_m": 2220, "end_m": 2330 },
+    { "id": "T9", "name": "Degner 2", "start_m": 2310, "apex_m": 2420, "end_m": 2530 },
+    { "id": "T10", "name": "Hairpin entry", "start_m": 2780, "apex_m": 2890, "end_m": 3000 },
+    { "id": "T11", "name": "Hairpin", "start_m": 2900, "apex_m": 3010, "end_m": 3120 },
+    { "id": "T12", "name": "200R", "start_m": 3260, "apex_m": 3370, "end_m": 3480 },
+    { "id": "T13", "name": "Spoon entry", "start_m": 3760, "apex_m": 3870, "end_m": 3980 },
+    { "id": "T14", "name": "Spoon exit", "start_m": 4010, "apex_m": 4120, "end_m": 4230 },
+    { "id": "T15", "name": "130R", "start_m": 4670, "apex_m": 4780, "end_m": 4890 },
+    { "id": "T16", "name": "Casio Triangle entry", "start_m": 5010, "apex_m": 5120, "end_m": 5230 },
+    { "id": "T17", "name": "Casio Triangle", "start_m": 5240, "apex_m": 5350, "end_m": 5460 },
+    { "id": "T18", "name": "Casio Triangle exit", "start_m": 5430, "apex_m": 5540, "end_m": 5650 }
+  ]
 }

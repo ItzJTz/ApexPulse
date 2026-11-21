@@ -113,16 +113,16 @@ Then follow these steps:
    * **Overview:** lap speed traces and cumulative time delta. Positive delta means the compared lap is ahead. An optional DTW panel aligns speed-profile shape for diagnosis only; it does not modify the time delta.
    * **Driver inputs:** available throttle, brake, steering, and G channels aligned by distance.
    * **G-G:** measured lateral/longitudinal acceleration sample density. Brighter cells mean more samples in that acceleration range; empty ranges are blank. Lateral G is signed left/right. Longitudinal G is sign-inverted, so positive means acceleration and negative means braking. It does not claim to estimate a validated tire-grip envelope.
-   * **Track map:** logged GPS positions when usable; otherwise an explicitly labeled approximate path from lateral acceleration.
-   * **Sectors:** minimum speeds and distance-integrated sector times when the track is identified and a matching configuration is available.
+   * **Track map:** logged GPS positions or vehicle coordinates when present; otherwise an explicitly labeled approximate path from lateral acceleration. Numbered corner markers use approximate apex distances from the track configuration. Assetto Corsa channels such as `Car Coord X`/`Car Coord Y` and `CG Accel Lateral`/`CG Accel Longitudinal` are recognized.
+   * **Sectors:** minimum speeds and distance-integrated sector and corner times when the track is identified and a matching configuration is available. Corner distances from published layouts are approximate and should be checked against telemetry.
    * **Data quality:** included/excluded laps, dropped/duplicate rows, optional-channel completeness, and downloads for the cleaned CSV and JSON report.
    * **Driver comparison:** upload a second session to compare its fastest complete lap with the fastest complete lap from the main session. Both files should be from the same circuit and use compatible distance units. If track metadata is missing, confirm this manually in the tab.
    * **Optimal lap:** uses dynamic programming to choose the fastest micro-sector combination within the configured seam-speed tolerance. It remains a theoretical benchmark assembled from different laps, not a full vehicle simulation.
-   * **Tire analytics:** plots inner-minus-outer temperature against lateral G and reports per-lap G-G envelope area and steering-speed-lateral-G integral when those input channels are available. G-G area change defaults to the first and last valid laps; optional `tire_analysis.baseline_lap` and `tire_analysis.compare_lap` settings select specific available laps. Area change alone does not prove tire degradation.
+   * **Tire analytics:** averages per-wheel inner/outer temperatures when available, plots their difference against lateral G, and reports per-lap G-G envelope area and steering-speed-lateral-G integral when those input channels are available. G-G area change defaults to the first and last valid laps; optional `tire_analysis.baseline_lap` and `tire_analysis.compare_lap` settings select specific available laps. Area change alone does not prove tire degradation.
 
 5. Use the data-quality tab to check which laps and samples were retained before interpreting comparisons or downloading the cleaned data and report.
 
-The dashboard reports sector times as estimates. A reconstructed path is not surveyed circuit geometry, and GPS coordinate values are shown as supplied by the data source. Track-specific sectors require the filename or source metadata to identify a track with a matching JSON configuration in `tracks/`.
+The dashboard reports sector times as estimates. Logged vehicle coordinates and reconstructed paths are not surveyed circuit geometry, and GPS coordinate values are shown as supplied by the data source. Track-specific sectors require the filename or source metadata to identify a track with a matching JSON configuration in `tracks/`.
 
 To run the separate command-line sector report, provide a raw or cleaned CSV whose filename or Venue metadata identifies its track:
 

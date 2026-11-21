@@ -40,6 +40,49 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Approximate", method)
         self.assertIn("not surveyed geometry", figure.layout.title.text)
 
+    def test_track_map_uses_logged_vehicle_coordinates(self):
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": [0, 10, 20, 30],
+                "Ground Speed": [100, 110, 90, 120],
+                "Car Coord X": [0, 10, 12, 0],
+                "Car Coord Y": [0, 1, 12, 10],
+                "G Force Lat": [0.0, 0.5, -0.4, 0.0],
+            }
+        )
+
+        figure, method = _track_figure(lap)
+
+        self.assertIsNotNone(figure)
+        self.assertEqual(method, "Logged vehicle coordinates")
+        self.assertEqual(list(figure.data[0].x), [0, 10, 12, 0])
+        self.assertIn("not surveyed geometry", figure.layout.title.text)
+
+    def test_track_map_marks_approximate_corner_apex(self):
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": [0, 10, 20, 30],
+                "Ground Speed": [100, 110, 90, 120],
+                "Car Coord X": [0, 10, 12, 0],
+                "Car Coord Y": [0, 1, 12, 10],
+            }
+        )
+        corners = [
+            {
+                "id": "T1",
+                "name": "First turn",
+                "start_m": 8,
+                "apex_m": 15,
+                "end_m": 20,
+            }
+        ]
+
+        figure, _ = _track_figure(lap, corners)
+
+        self.assertEqual(figure.data[-1].name, "Corners")
+        self.assertEqual(list(figure.data[-1].text), ["T1"])
+        self.assertEqual(list(figure.data[-1].x), [11])
+
     def test_dashboard_renders_all_tabs_without_runtime_exceptions(self):
         app_path = (
             Path(__file__).resolve().parents[1]

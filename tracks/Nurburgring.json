@@ -1,10 +1,29 @@
 {
   "circuit_name": "Nürburgring GP",
   "total_length_m": 5148,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1-4 (Yokohama S)": [200, 900],
     "Turn 5-7 (Müllenbach)": [1400, 2000],
     "Turn 8-9 (Michael Schumacher S)": [2600, 3100],
     "Turn 13-14 (NGK Chicane)": [4300, 4700]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Castrol S", "start_m": 150, "apex_m": 240, "end_m": 330 },
+    { "id": "T2", "name": "Mercedes Arena", "start_m": 400, "apex_m": 500, "end_m": 600 },
+    { "id": "T3", "name": "Mercedes Arena", "start_m": 570, "apex_m": 670, "end_m": 770 },
+    { "id": "T4", "name": "Mercedes Arena exit", "start_m": 720, "apex_m": 820, "end_m": 920 },
+    { "id": "T5", "name": "Ford-Kurve", "start_m": 1210, "apex_m": 1310, "end_m": 1410 },
+    { "id": "T6", "name": "Dunlop-Kehre", "start_m": 1480, "apex_m": 1580, "end_m": 1680 },
+    { "id": "T7", "name": "Turn 7", "start_m": 1800, "apex_m": 1900, "end_m": 2000 },
+    { "id": "T8", "name": "Turn 8", "start_m": 2520, "apex_m": 2620, "end_m": 2720 },
+    { "id": "T9", "name": "Turn 9", "start_m": 2810, "apex_m": 2910, "end_m": 3010 },
+    { "id": "T10", "name": "Turn 10", "start_m": 3150, "apex_m": 3250, "end_m": 3350 },
+    { "id": "T11", "name": "Turn 11", "start_m": 3450, "apex_m": 3550, "end_m": 3650 },
+    { "id": "T12", "name": "Turn 12", "start_m": 3770, "apex_m": 3870, "end_m": 3970 },
+    { "id": "T13", "name": "NGK Chicane entry", "start_m": 4220, "apex_m": 4320, "end_m": 4420 },
+    { "id": "T14", "name": "NGK Chicane exit", "start_m": 4400, "apex_m": 4500, "end_m": 4600 },
+    { "id": "T15", "name": "Turn 15", "start_m": 4680, "apex_m": 4780, "end_m": 4880 },
+    { "id": "T16", "name": "Turn 16", "start_m": 4880, "apex_m": 4980, "end_m": 5080 }
+  ]
 }

@@ -67,6 +67,36 @@ class TelemetryIoTests(unittest.TestCase):
         self.assertEqual(prepared["Ground Speed"].tolist(), [90, 100, 101, 110])
         self.assertEqual(prepared.attrs["quality"]["repeated_distance_samples"], 1)
 
+    def test_normalizes_assetto_corsa_optional_channel_names(self):
+        frame = pd.DataFrame(
+            {
+                "Lap Number": [1, 1, 1],
+                "Lap Distance": [0, 10, 20],
+                "Ground Speed": [36, 72, 36],
+                "Steering Angle": [0, 5, -5],
+                "CG Accel Lateral": [0.1, 0.8, -0.7],
+                "CG Accel Longitudinal": [-0.2, 0.3, -0.4],
+                "Tire Temp Inner FL": [100, 102, 104],
+                "Tire Temp Inner FR": [110, 112, 114],
+                "Tire Temp Outer FL": [90, 92, 94],
+                "Tire Temp Outer FR": [100, 102, 104],
+            }
+        )
+
+        prepared = prepare_telemetry_frame(frame)
+
+        self.assertEqual(prepared["Steering"].tolist(), [0, 5, -5])
+        self.assertEqual(prepared["G Force Lat"].tolist(), [0.1, 0.8, -0.7])
+        self.assertEqual(prepared["G Force Long"].tolist(), [-0.2, 0.3, -0.4])
+        self.assertEqual(prepared["Tire Temp Inner"].tolist(), [105, 107, 109])
+        self.assertEqual(prepared["Tire Temp Outer"].tolist(), [95, 97, 99])
+        self.assertEqual(
+            prepared.attrs["quality"]["optional_channel_missing_percent"][
+                "G Force Lat"
+            ],
+            0.0,
+        )
+
     def test_rejects_missing_required_channel(self):
         with self.assertRaisesRegex(ValueError, "Ground Speed"):
             prepare_telemetry_frame(

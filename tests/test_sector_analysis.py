@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -8,6 +10,41 @@ from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class SectorAnalysisTests(unittest.TestCase):
+    def test_all_track_configs_have_valid_approximate_corner_gates(self):
+        track_directory = Path(__file__).resolve().parents[1] / "tracks"
+        configs = sorted(track_directory.glob("*.json"))
+
+        self.assertTrue(configs)
+        for config_path in configs:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            corners = config.get("corner_metadata", [])
+
+            with self.subTest(track=config_path.stem):
+                self.assertTrue(corners)
+                self.assertTrue(config.get("corner_distance_quality"))
+                self.assertEqual(
+                    len({corner["id"] for corner in corners}),
+                    len(corners),
+                )
+                self.assertEqual(
+                    [corner["apex_m"] for corner in corners],
+                    sorted(corner["apex_m"] for corner in corners),
+                )
+                for corner in corners:
+                    self.assertLessEqual(0, corner["start_m"])
+                    self.assertLessEqual(
+                        corner["start_m"],
+                        corner["apex_m"],
+                    )
+                    self.assertLessEqual(
+                        corner["apex_m"],
+                        corner["end_m"],
+                    )
+                    self.assertLessEqual(
+                        corner["end_m"],
+                        config["total_length_m"],
+                    )
+
     def test_sector_time_integrates_interpolated_boundaries(self):
         lap = prepare_telemetry_frame(
             pd.DataFrame(

@@ -1,6 +1,7 @@
 {
   "circuit_name": "Autodromo Enzo e Dino Ferrari (Imola)",
   "total_length_m": 4909,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 2-4 (Tamburello)": [500, 900],
     "Turn 5-6 (Villeneuve)": [1100, 1500],
@@ -9,5 +10,26 @@
     "Turn 11-13 (Acque Minerali)": [2800, 3300],
     "Turn 14-15 (Variante Alta)": [3700, 4000],
     "Turn 17-18 (Rivazza)": [4200, 4700]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Turn 1", "start_m": 120, "apex_m": 200, "end_m": 280 },
+    { "id": "T2", "name": "Tamburello entry", "start_m": 520, "apex_m": 600, "end_m": 680 },
+    { "id": "T3", "name": "Tamburello", "start_m": 650, "apex_m": 740, "end_m": 830 },
+    { "id": "T4", "name": "Tamburello exit", "start_m": 780, "apex_m": 870, "end_m": 960 },
+    { "id": "T5", "name": "Villeneuve entry", "start_m": 1040, "apex_m": 1130, "end_m": 1220 },
+    { "id": "T6", "name": "Villeneuve exit", "start_m": 1300, "apex_m": 1390, "end_m": 1480 },
+    { "id": "T7", "name": "Tosa", "start_m": 1650, "apex_m": 1740, "end_m": 1830 },
+    { "id": "T8", "name": "Piratella approach", "start_m": 2070, "apex_m": 2160, "end_m": 2250 },
+    { "id": "T9", "name": "Piratella", "start_m": 2280, "apex_m": 2370, "end_m": 2460 },
+    { "id": "T10", "name": "Acque Minerali entry", "start_m": 2670, "apex_m": 2760, "end_m": 2850 },
+    { "id": "T11", "name": "Acque Minerali", "start_m": 2850, "apex_m": 2940, "end_m": 3030 },
+    { "id": "T12", "name": "Acque Minerali", "start_m": 3000, "apex_m": 3090, "end_m": 3180 },
+    { "id": "T13", "name": "Acque Minerali exit", "start_m": 3160, "apex_m": 3250, "end_m": 3340 },
+    { "id": "T14", "name": "Variante Alta entry", "start_m": 3620, "apex_m": 3710, "end_m": 3800 },
+    { "id": "T15", "name": "Variante Alta exit", "start_m": 3830, "apex_m": 3920, "end_m": 4010 },
+    { "id": "T16", "name": "Rivazza entry", "start_m": 4110, "apex_m": 4200, "end_m": 4290 },
+    { "id": "T17", "name": "Rivazza", "start_m": 4280, "apex_m": 4370, "end_m": 4460 },
+    { "id": "T18", "name": "Rivazza exit", "start_m": 4490, "apex_m": 4580, "end_m": 4670 },
+    { "id": "T19", "name": "Turn 19", "start_m": 4730, "apex_m": 4820, "end_m": 4900 }
+  ]
 }

@@ -1,11 +1,25 @@
 {
   "circuit_name": "Autodromo Nazionale Monza",
   "total_length_m": 5793,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1-2 (Variante del Rettifilo)": [200, 600],
     "Turn 4-5 (Variante della Roggia)": [1700, 2100],
     "Turn 8-9 (Lesmo)": [2800, 3300],
     "Turn 11 (Variante Ascari)": [4200, 4800],
     "Turn 13 (Curva Parabolica / Alboreto)": [5200, 5650]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Variante del Rettifilo entry", "start_m": 180, "apex_m": 270, "end_m": 360 },
+    { "id": "T2", "name": "Variante del Rettifilo exit", "start_m": 380, "apex_m": 470, "end_m": 560 },
+    { "id": "T3", "name": "Curva Biassono", "start_m": 1270, "apex_m": 1370, "end_m": 1470 },
+    { "id": "T4", "name": "Variante della Roggia entry", "start_m": 1660, "apex_m": 1760, "end_m": 1860 },
+    { "id": "T5", "name": "Variante della Roggia exit", "start_m": 1880, "apex_m": 1980, "end_m": 2080 },
+    { "id": "T6", "name": "Lesmo 1", "start_m": 2650, "apex_m": 2750, "end_m": 2850 },
+    { "id": "T7", "name": "Lesmo 2", "start_m": 3070, "apex_m": 3170, "end_m": 3270 },
+    { "id": "T8", "name": "Variante Ascari entry", "start_m": 4050, "apex_m": 4150, "end_m": 4250 },
+    { "id": "T9", "name": "Variante Ascari", "start_m": 4260, "apex_m": 4360, "end_m": 4460 },
+    { "id": "T10", "name": "Variante Ascari exit", "start_m": 4500, "apex_m": 4600, "end_m": 4700 },
+    { "id": "T11", "name": "Curva Alboreto", "start_m": 5350, "apex_m": 5450, "end_m": 5550 }
+  ]
 }

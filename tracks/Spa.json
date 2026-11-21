@@ -1,11 +1,33 @@
 {
   "circuit_name": "Circuit de Spa-Francorchamps",
   "total_length_m": 7004,
+  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1 (La Source)": [100, 350],
     "Turn 2-4 (Eau Rouge / Raidillon)": [450, 950],
     "Turn 10 (Les Combes)": [2100, 2450],
     "Turn 14-15 (Pouhon)": [3900, 4400],
     "Turn 18-19 (Bus Stop Chicane)": [6300, 6700]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "La Source", "start_m": 100, "apex_m": 220, "end_m": 340 },
+    { "id": "T2", "name": "Eau Rouge", "start_m": 450, "apex_m": 560, "end_m": 670 },
+    { "id": "T3", "name": "Raidillon", "start_m": 650, "apex_m": 780, "end_m": 900 },
+    { "id": "T4", "name": "Les Combes entry", "start_m": 2050, "apex_m": 2170, "end_m": 2290 },
+    { "id": "T5", "name": "Les Combes", "start_m": 2220, "apex_m": 2340, "end_m": 2460 },
+    { "id": "T6", "name": "Malmedy", "start_m": 2430, "apex_m": 2550, "end_m": 2670 },
+    { "id": "T7", "name": "Bruxelles", "start_m": 2920, "apex_m": 3040, "end_m": 3160 },
+    { "id": "T8", "name": "No Name", "start_m": 3280, "apex_m": 3400, "end_m": 3520 },
+    { "id": "T9", "name": "Pouhon entry", "start_m": 3780, "apex_m": 3900, "end_m": 4020 },
+    { "id": "T10", "name": "Pouhon exit", "start_m": 4000, "apex_m": 4120, "end_m": 4240 },
+    { "id": "T11", "name": "Fagnes entry", "start_m": 4480, "apex_m": 4600, "end_m": 4720 },
+    { "id": "T12", "name": "Fagnes exit", "start_m": 4680, "apex_m": 4800, "end_m": 4920 },
+    { "id": "T13", "name": "Stavelot", "start_m": 5220, "apex_m": 5340, "end_m": 5460 },
+    { "id": "T14", "name": "Courbe Paul Frere", "start_m": 5580, "apex_m": 5700, "end_m": 5820 },
+    { "id": "T15", "name": "Blanchimont", "start_m": 6030, "apex_m": 6150, "end_m": 6270 },
+    { "id": "T16", "name": "Blanchimont exit", "start_m": 6170, "apex_m": 6290, "end_m": 6410 },
+    { "id": "T17", "name": "Bus Stop entry", "start_m": 6390, "apex_m": 6510, "end_m": 6630 },
+    { "id": "T18", "name": "Bus Stop", "start_m": 6540, "apex_m": 6660, "end_m": 6780 },
+    { "id": "T19", "name": "Bus Stop exit", "start_m": 6710, "apex_m": 6840, "end_m": 6970 }
+  ]
 }

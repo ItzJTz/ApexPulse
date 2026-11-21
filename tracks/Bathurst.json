@@ -1,11 +1,37 @@
 {
   "circuit_name": "Mount Panorama (Bathurst)",
   "total_length_m": 6213,
+  "corner_distance_quality": "Approximate estimates from the published full-circuit layout; calibrate against telemetry.",
   "sectors": {
     "Turn 1 (Hell Corner)": [150, 450],
     "Turn 4 (The Cutting)": [1300, 1700],
     "Turn 11-18 (Skyline & The Dipper)": [2900, 3600],
     "Turn 19 (Forrest's Elbow)": [3800, 4100],
     "Turn 21-22 (The Chase)": [5200, 5700]
-  }
+  },
+  "corner_metadata": [
+    { "id": "T1", "name": "Hell Corner", "start_m": 180, "apex_m": 260, "end_m": 340 },
+    { "id": "T2", "name": "Turn 2", "start_m": 450, "apex_m": 540, "end_m": 630 },
+    { "id": "T3", "name": "Turn 3", "start_m": 900, "apex_m": 1000, "end_m": 1100 },
+    { "id": "T4", "name": "The Cutting", "start_m": 1340, "apex_m": 1440, "end_m": 1540 },
+    { "id": "T5", "name": "Turn 5", "start_m": 1640, "apex_m": 1740, "end_m": 1840 },
+    { "id": "T6", "name": "Turn 6", "start_m": 1930, "apex_m": 2030, "end_m": 2130 },
+    { "id": "T7", "name": "Turn 7", "start_m": 2230, "apex_m": 2330, "end_m": 2430 },
+    { "id": "T8", "name": "Turn 8", "start_m": 2670, "apex_m": 2770, "end_m": 2870 },
+    { "id": "T9", "name": "Turn 9", "start_m": 2890, "apex_m": 2980, "end_m": 3070 },
+    { "id": "T10", "name": "Turn 10", "start_m": 3070, "apex_m": 3160, "end_m": 3250 },
+    { "id": "T11", "name": "Turn 11", "start_m": 3240, "apex_m": 3330, "end_m": 3420 },
+    { "id": "T12", "name": "Turn 12", "start_m": 3350, "apex_m": 3440, "end_m": 3530 },
+    { "id": "T13", "name": "Turn 13", "start_m": 3420, "apex_m": 3510, "end_m": 3600 },
+    { "id": "T14", "name": "Turn 14", "start_m": 3480, "apex_m": 3570, "end_m": 3660 },
+    { "id": "T15", "name": "Turn 15", "start_m": 3550, "apex_m": 3640, "end_m": 3730 },
+    { "id": "T16", "name": "Turn 16", "start_m": 3600, "apex_m": 3690, "end_m": 3780 },
+    { "id": "T17", "name": "Turn 17", "start_m": 3660, "apex_m": 3750, "end_m": 3840 },
+    { "id": "T18", "name": "Turn 18", "start_m": 3720, "apex_m": 3810, "end_m": 3900 },
+    { "id": "T19", "name": "Forrest's Elbow", "start_m": 3870, "apex_m": 3970, "end_m": 4070 },
+    { "id": "T20", "name": "Turn 20", "start_m": 4900, "apex_m": 5000, "end_m": 5100 },
+    { "id": "T21", "name": "The Chase entry", "start_m": 5230, "apex_m": 5330, "end_m": 5430 },
+    { "id": "T22", "name": "The Chase exit", "start_m": 5480, "apex_m": 5580, "end_m": 5680 },
+    { "id": "T23", "name": "Murray's Corner", "start_m": 5960, "apex_m": 6050, "end_m": 6140 }
+  ]
 }
