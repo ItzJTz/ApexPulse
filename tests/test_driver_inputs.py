@@ -9,6 +9,7 @@ from src.core.analysis import corner_delta_breakdown
 from src.core.driver_inputs import (
     analyze_driver_inputs,
     auto_detect_apexes,
+    cluster_events,
     cluster_distances,
     map_distance_to_corner,
 )
@@ -65,7 +66,7 @@ class DriverInputTests(unittest.TestCase):
         result = analyze_driver_inputs(frame, 1, track_config)
 
         self.assertEqual(len(result["metrics"]["double_braking_m"]), 1)
-        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 3)
+        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 2)
         self.assertAlmostEqual(result["metrics"]["trail_brake_overlap_pct"], 200 / 3)
         self.assertEqual(len(result["metrics"]["loaded_throttle_snaps_m"]), 1)
         self.assertEqual(len(result["metrics"]["throttle_hesitations_m"]), 1)
@@ -73,6 +74,14 @@ class DriverInputTests(unittest.TestCase):
         self.assertEqual(len(result["metrics"]["loaded_downshifts_m"]), 1)
         self.assertTrue(result["clusters"])
         self.assertEqual(result["clusters"][0]["corner"], "T1 Test corner")
+        self.assertEqual(
+            sorted(
+                event["sample_count"]
+                for event in result["events"]
+                if event["detector"] == "abrupt_brake_release_m"
+            ),
+            [1, 2],
+        )
 
     def test_cluster_distances_uses_consecutive_gap_threshold(self):
         clusters = cluster_distances([81, 40, 0, 200], max_gap_m=40)
@@ -80,6 +89,89 @@ class DriverInputTests(unittest.TestCase):
         self.assertEqual(
             [(cluster["start_m"], cluster["end_m"]) for cluster in clusters],
             [(0, 40), (81, 81), (200, 200)],
+        )
+
+    def test_ten_trigger_samples_collapse_into_four_loaded_throttle_events(self):
+        distances = [
+            3103.5,
+            3104.3,
+            3105.8,
+            3274.6,
+            3275.7,
+            3488.6,
+            3490.7,
+            4066.1,
+            4069.0,
+            4097.5,
+        ]
+        triggers = [
+            {"detector": "loaded_throttle_snaps_m", "distance_m": distance}
+            for distance in distances
+        ]
+
+        events = cluster_events(triggers)
+
+        self.assertEqual(len(events), 4)
+        self.assertEqual([event["sample_count"] for event in events], [3, 2, 2, 3])
+        self.assertEqual(
+            [(event["start_m"], event["end_m"]) for event in events],
+            [
+                (3103.5, 3105.8),
+                (3274.6, 3275.7),
+                (3488.6, 3490.7),
+                (4066.1, 4097.5),
+            ],
+        )
+
+    def test_detector_count_and_event_table_use_clustered_trigger_samples(self):
+        distance = np.arange(4100, dtype=float)
+        throttle = np.zeros(len(distance))
+        steering = np.zeros(len(distance))
+        trigger_groups = (
+            (3103, 3104, 3105),
+            (3274, 3275),
+            (3488, 3490),
+            (4066, 4069, 4097),
+        )
+        for group in trigger_groups:
+            throttle[group[0] - 1] = 0
+            for level, index in enumerate(group, start=1):
+                throttle[index] = level * 20
+                steering[index] = 25
+        speed = (
+            180
+            - 55 * np.exp(-((distance - 1000) / 45) ** 2)
+            - 45 * np.exp(-((distance - 2500) / 50) ** 2)
+            - 50 * np.exp(-((distance - 3600) / 50) ** 2)
+        )
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * len(distance),
+                    "Lap Distance": distance,
+                    "Ground Speed": speed,
+                    "Time": np.arange(len(distance), dtype=float) / 50,
+                    "Throttle Pos": throttle,
+                    "Brake Pos": np.zeros(len(distance)),
+                    "Steering": steering,
+                    "Gear": np.full(len(distance), 4),
+                }
+            )
+        )
+
+        result = analyze_driver_inputs(frame, 1)
+
+        self.assertEqual(len(result["raw_events"]), 10)
+        self.assertEqual(len(result["metrics"]["loaded_throttle_snaps_m"]), 4)
+        throttle_events = [
+            event
+            for event in result["events"]
+            if event["detector"] == "loaded_throttle_snaps_m"
+        ]
+        self.assertEqual(len(throttle_events), 4)
+        self.assertEqual(
+            [event["sample_count"] for event in throttle_events],
+            [3, 2, 2, 3],
         )
 
     def test_sepang_distance_mapper_names_turn_one_and_turn_fifteen(self):
@@ -115,6 +207,51 @@ class DriverInputTests(unittest.TestCase):
         self.assertEqual(len(corners), 2)
         self.assertAlmostEqual(corners[0]["apex_m"], 300, delta=30)
         self.assertAlmostEqual(corners[1]["apex_m"], 700, delta=30)
+
+    def test_event_corner_uses_speed_minima_instead_of_sepang_distance_gates(self):
+        distance = np.arange(1000, dtype=float)
+        speed = (
+            180
+            - 55 * np.exp(-((distance - 300) / 45) ** 2)
+            - 45 * np.exp(-((distance - 700) / 50) ** 2)
+        )
+        throttle = np.zeros(len(distance))
+        throttle[295:297] = [0, 20]
+        steering = np.zeros(len(distance))
+        steering[296] = 25
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * len(distance),
+                    "Lap Distance": distance,
+                    "Ground Speed": speed,
+                    "Time": np.arange(len(distance), dtype=float) / 50,
+                    "Throttle Pos": throttle,
+                    "Brake Pos": np.zeros(len(distance)),
+                    "Steering": steering,
+                    "Gear": np.full(len(distance), 4),
+                }
+            )
+        )
+        misleading_track_gates = {
+            "circuit_name": "Sepang International Circuit",
+            "corner_metadata": [
+                {
+                    "id": "T9",
+                    "name": "Static wrong corner",
+                    "start_m": 250,
+                    "apex_m": 260,
+                    "end_m": 280,
+                }
+            ],
+        }
+
+        result = analyze_driver_inputs(frame, 1, misleading_track_gates)
+
+        event = result["events"][0]
+        self.assertEqual(event["detector"], "loaded_throttle_snaps_m")
+        self.assertEqual(event["corner"], "T1 Auto-detected corner 1")
+        self.assertEqual(result["auto_detected_corners"][0]["id"], "T1")
 
     def test_corner_delta_breakdown_ranks_time_loss_against_reference_trace(self):
         frame = prepare_telemetry_frame(

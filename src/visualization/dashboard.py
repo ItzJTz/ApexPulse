@@ -639,11 +639,21 @@ def main():
                 value = metrics[key]
                 if key.endswith("_m"):
                     display = "Unavailable" if value is None else str(len(value))
+                    help_text = (
+                        "Event count after merging repeated trigger samples "
+                        "within 40 m."
+                    )
                 elif key == "trail_brake_overlap_pct":
                     display = "Unavailable" if value is None else f"{value:.1f}%"
+                    help_text = None
                 else:
                     display = "Unavailable" if value is None else f"{value:.2f} s"
-                metric_columns[index % 4].metric(label, display)
+                    help_text = None
+                metric_columns[index % 4].metric(
+                    label,
+                    display,
+                    help=help_text,
+                )
 
             if input_analysis["events"]:
                 st.subheader("Detected input events")
@@ -653,6 +663,10 @@ def main():
                             {
                                 "Detector": event["detector"].replace("_m", "").replace("_", " ").title(),
                                 "Distance (m)": round(event["distance_m"], 1),
+                                "Cluster range (m)": (
+                                    f"{event['start_m']:.1f}-{event['end_m']:.1f}"
+                                ),
+                                "Samples merged": event["sample_count"],
                                 "Corner": event["corner"] or "Unmapped",
                             }
                             for event in input_analysis["events"]

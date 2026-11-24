@@ -50,6 +50,48 @@ def _distance_cluster(distances):
     }
 
 
+def cluster_events(events, max_gap_m=EVENT_CLUSTER_DISTANCE_M):
+    """Collapse repeat trigger samples within each detector into corner events."""
+    if not math.isfinite(max_gap_m) or max_gap_m < 0:
+        raise ValueError("max_gap_m must be finite and non-negative.")
+    ordered = sorted(events, key=lambda event: float(event["distance_m"]))
+    groups = []
+    current = []
+    for event in ordered:
+        if current and (
+            float(event["distance_m"]) - float(current[-1]["distance_m"])
+            > max_gap_m
+        ):
+            groups.append(current)
+            current = []
+        current.append(event)
+    if current:
+        groups.append(current)
+
+    clustered = []
+    for samples in groups:
+        cluster = _distance_cluster(
+            [float(event["distance_m"]) for event in samples]
+        )
+        representative = min(
+            samples,
+            key=lambda event: abs(event["distance_m"] - cluster["distance_m"]),
+        )
+        clustered.append(
+            {
+                **representative,
+                "distance_m": cluster["distance_m"],
+                "start_m": cluster["start_m"],
+                "end_m": cluster["end_m"],
+                "sample_count": cluster["sample_count"],
+                "trigger_distances_m": [
+                    float(event["distance_m"]) for event in samples
+                ],
+            }
+        )
+    return clustered
+
+
 def _corner_label(corner, is_sepang):
     corner_id = str(corner.get("id", ""))
     name = str(corner.get("name", corner_id))
@@ -78,6 +120,20 @@ def map_distance_to_corner(distance_m, track_config=None):
         key=lambda item: abs(float(item["apex_m"]) - distance),
     )
     return _corner_label(corner, is_sepang)
+
+
+def _map_to_detected_corner(distance_m, corners):
+    try:
+        distance = float(distance_m)
+    except (TypeError, ValueError):
+        return None
+    if not corners or not math.isfinite(distance):
+        return None
+    corner = min(
+        corners,
+        key=lambda item: abs(float(item["apex_m"]) - distance),
+    )
+    return f"{corner.get('id', '')} {corner.get('name', '')}".strip()
 
 
 def auto_detect_apexes(
@@ -317,18 +373,16 @@ def analyze_driver_inputs(
     gear = channels["Gear"]
     count = len(distance)
 
-    corners = (
-        track_config.get("corner_metadata", [])
-        if track_config and track_config.get("corner_metadata")
-        else auto_detect_apexes(
-            pd.DataFrame(
-                {
-                    "Normalized_Dist": distance,
-                    "Ground Speed": speed,
-                }
-            )
+    corners = auto_detect_apexes(
+        pd.DataFrame(
+            {
+                "Normalized_Dist": distance,
+                "Ground Speed": speed,
+            }
         )
     )
+    if not corners and track_config:
+        corners = track_config.get("corner_metadata", [])
     events_by_detector = {
         "double_braking_m": _double_braking_events(channels, corners),
         "abrupt_brake_release_m": [],
@@ -421,24 +475,35 @@ def analyze_driver_inputs(
         )
         for detector, required in required_channels.items()
     }
-    flattened_events = []
+    raw_events = []
     for detector, events in events_by_detector.items():
         if not available[detector]:
             continue
         for event in events:
-            flattened_events.append(
+            raw_events.append(
                 {
                     "detector": detector,
                     **event,
-                    "corner": map_distance_to_corner(
-                        event["distance_m"], track_config
-                    )
-                    or map_distance_to_corner(
-                        event["distance_m"],
-                        {"corner_metadata": corners},
+                    "corner": _map_to_detected_corner(
+                        event["distance_m"], corners
                     ),
                 }
             )
+
+    clustered_by_detector = {}
+    for detector in events_by_detector:
+        detector_events = [
+            event for event in raw_events if event["detector"] == detector
+        ]
+        clustered_by_detector[detector] = cluster_events(
+            detector_events,
+            max_gap_m=cluster_distance_m,
+        )
+    flattened_events = [
+        event
+        for detector_events in clustered_by_detector.values()
+        for event in detector_events
+    ]
 
     clusters = cluster_distances(
         (event["distance_m"] for event in flattened_events),
@@ -452,12 +517,8 @@ def analyze_driver_inputs(
         ]
         cluster["detectors"] = sorted({event["detector"] for event in grouped})
         cluster["events"] = grouped
-        cluster["corner"] = (
-            map_distance_to_corner(cluster["distance_m"], track_config)
-            or map_distance_to_corner(
-                cluster["distance_m"],
-                {"corner_metadata": corners},
-            )
+        cluster["corner"] = _map_to_detected_corner(
+            cluster["distance_m"], corners
         )
 
     return {
@@ -469,17 +530,21 @@ def analyze_driver_inputs(
         ),
         "metrics": {
             detector: (
-                [event["distance_m"] for event in events]
+                [
+                    event["distance_m"]
+                    for event in clustered_by_detector[detector]
+                ]
                 if available[detector]
                 else None
             )
-            for detector, events in events_by_detector.items()
+            for detector in events_by_detector
         }
         | {
             "trail_brake_overlap_pct": trail_brake_overlap_pct,
             "dead_coasting_sec": dead_coasting_seconds,
         },
         "events": flattened_events,
+        "raw_events": raw_events,
         "clusters": clusters,
         "auto_detected_corners": corners,
     }
