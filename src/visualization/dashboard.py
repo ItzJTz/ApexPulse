@@ -12,16 +12,20 @@ from src.config import config_value
 from src.core.analysis import (
     align_driver_sessions,
     align_laps,
+    corner_delta_breakdown,
     load_track_config,
     optimal_lap_analysis,
     sector_results,
 )
+from src.core.driver_inputs import analyze_driver_inputs, auto_detect_apexes
 from src.core.math_channels import tire_metrics
 from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
+    lap_time_seconds,
     load_telemetry,
     load_telemetry_text,
     process_session,
+    valid_lap_numbers,
 )
 from src.core.spatial import interpolate_spatial
 
@@ -407,10 +411,25 @@ def main():
         clean_frame,
         count=max(2, clean_frame["Lap Number"].nunique()),
     )
+    reference_target_seconds = float(config_value("analysis", "reference_lap_seconds"))
+    reference_target_label = (
+        f"{int(reference_target_seconds // 60)}:"
+        f"{reference_target_seconds % 60:06.3f}"
+    )
     with st.sidebar:
         if len(lap_options) >= 2:
-            default_a = lap_options[0]
-            default_b = lap_options[1]
+            default_a = min(
+                lap_options,
+                key=lambda lap: abs(
+                    lap_time_seconds(
+                        clean_frame[clean_frame["Lap Number"] == lap]
+                    )
+                    - reference_target_seconds
+                ),
+            )
+            default_b = next(lap for lap in lap_options if lap != lap_options[0])
+            if default_b == default_a:
+                default_b = next(lap for lap in lap_options if lap != default_a)
             lap_a = st.selectbox(
                 "Reference lap",
                 lap_options,
@@ -448,7 +467,7 @@ def main():
         if track_length >= 1000
         else f"{track_length:,.0f} m"
     )
-    metrics[0].metric("Valid laps", quality["laps"]["total"] - len(quality["laps"]["excluded_incomplete"]))
+    metrics[0].metric("Valid laps", len(quality["laps"]["complete"]))
     metrics[1].metric("Samples kept", retained_display)
     metrics[2].metric("Invalid rows", f"{quality['rows']['invalid_required_data']:,}")
     metrics[3].metric("Circuit length", track_length_display)
@@ -580,6 +599,22 @@ def main():
                 )
 
     with tabs[1]:
+        input_config = load_track_config(clean_frame)
+        input_lap = (
+            st.selectbox(
+                "Analyze input events on lap",
+                lap_options,
+                index=lap_options.index(lap_a) if lap_a in lap_options else 0,
+                format_func=lambda value: f"Lap {value:g}",
+            )
+            if lap_options
+            else None
+        )
+        input_analysis = (
+            analyze_driver_inputs(clean_frame, input_lap, input_config)
+            if input_lap is not None
+            else None
+        )
         if alignment is not None:
             inputs = _input_figure(clean_frame, lap_a, lap_b, alignment)
             if inputs is None:
@@ -588,6 +623,77 @@ def main():
                 st.plotly_chart(inputs, width="stretch")
         else:
             st.info("Select at least two complete laps to compare driver inputs.")
+        if input_analysis is not None:
+            metrics = input_analysis["metrics"]
+            metric_labels = (
+                ("double_braking_m", "Double braking"),
+                ("abrupt_brake_release_m", "Abrupt brake releases"),
+                ("trail_brake_overlap_pct", "Trail-brake overlap"),
+                ("loaded_throttle_snaps_m", "Loaded throttle snaps"),
+                ("throttle_hesitations_m", "Throttle hesitations"),
+                ("dead_coasting_sec", "Dead coasting"),
+                ("loaded_downshifts_m", "Loaded downshifts"),
+            )
+            metric_columns = st.columns(4)
+            for index, (key, label) in enumerate(metric_labels):
+                value = metrics[key]
+                if key.endswith("_m"):
+                    display = "Unavailable" if value is None else str(len(value))
+                elif key == "trail_brake_overlap_pct":
+                    display = "Unavailable" if value is None else f"{value:.1f}%"
+                else:
+                    display = "Unavailable" if value is None else f"{value:.2f} s"
+                metric_columns[index % 4].metric(label, display)
+
+            if input_analysis["events"]:
+                st.subheader("Detected input events")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Detector": event["detector"].replace("_m", "").replace("_", " ").title(),
+                                "Distance (m)": round(event["distance_m"], 1),
+                                "Corner": event["corner"] or "Unmapped",
+                            }
+                            for event in input_analysis["events"]
+                        ]
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
+                st.subheader("Spatially clustered events")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Distance range (m)": (
+                                    f"{cluster['start_m']:.0f}-{cluster['end_m']:.0f}"
+                                ),
+                                "Corner": cluster["corner"] or "Unmapped",
+                                "Detectors": ", ".join(
+                                    detector.replace("_m", "").replace("_", " ")
+                                    for detector in cluster["detectors"]
+                                ),
+                                "Event count": cluster["sample_count"],
+                            }
+                            for cluster in input_analysis["clusters"]
+                        ]
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
+            else:
+                st.info(
+                    "No input mistakes crossed the configured thresholds on this lap. "
+                    "The trail-brake ratio and dead-coasting time still summarize available channels."
+                )
+            if input_analysis["auto_detected_corners"] and not (
+                input_config and input_config.get("corner_metadata")
+            ):
+                st.caption(
+                    f"Track-agnostic speed-minimum detection found "
+                    f"{len(input_analysis['auto_detected_corners'])} corner candidates."
+                )
 
     with tabs[2]:
         selected_lap = clean_frame[clean_frame["Lap Number"] == lap_a]
@@ -618,16 +724,24 @@ def main():
         map_lap = clean_frame[clean_frame["Lap Number"] == lap_a] if lap_a is not None else clean_frame.iloc[0:0]
         map_config = load_track_config(clean_frame)
         corner_metadata = map_config.get("corner_metadata", []) if map_config else []
+        if not corner_metadata and not map_lap.empty:
+            corner_metadata = auto_detect_apexes(map_lap)
         track_figure, method = _track_figure(map_lap, corner_metadata)
         if track_figure is None:
             st.info(method)
         else:
             st.caption(method)
             if corner_metadata:
-                st.caption(
-                    "Turn markers show approximate apex distances from published layouts; "
-                    "verify their positions against telemetry before using them as exact gates."
-                )
+                if map_config:
+                    st.caption(
+                        "Turn markers show approximate apex distances from published layouts; "
+                        "verify their positions against telemetry before using them as exact gates."
+                    )
+                else:
+                    st.caption(
+                        "Corner markers are track-agnostic candidates estimated from local "
+                        "ground-speed minima, not surveyed or validated corner boundaries."
+                    )
             st.plotly_chart(track_figure, width="stretch")
 
     with tabs[4]:
@@ -680,21 +794,77 @@ def main():
                 )
             else:
                 st.info("The selected laps do not cover the configured sector gates.")
+            if config.get("corner_metadata"):
+                corner_deltas = corner_delta_breakdown(
+                    clean_frame,
+                    lap_a,
+                    lap_b,
+                    config,
+                    reference_target_seconds,
+                )
+                if corner_deltas and corner_deltas["ranked_by_time_loss"]:
+                    st.subheader("Corner-by-corner time loss")
+                    st.caption(
+                        f"Configured benchmark: {reference_target_seconds:.3f} s "
+                        f"({reference_target_label}). Selected reference telemetry: lap "
+                        f"{corner_deltas['reference_lap']:g}, "
+                        f"{corner_deltas['reference_lap_seconds']:.3f} s. "
+                        + (
+                            "This lap matches the benchmark."
+                            if corner_deltas["reference_matches_benchmark"]
+                            else "A lap time alone has no corner-speed trace; deltas use the selected telemetry lap."
+                        )
+                    )
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {
+                                    "Rank": rank,
+                                    "Corner": corner["corner"],
+                                    "Reference time (s)": corner["reference_time_seconds"],
+                                    "Compared time (s)": corner["compared_time_seconds"],
+                                    "Time loss (s)": corner["time_loss_seconds"],
+                                    "Cumulative loss in lap order (s)": (
+                                        corner["cumulative_time_loss_seconds"]
+                                    ),
+                                }
+                                for rank, corner in enumerate(
+                                    corner_deltas["ranked_by_time_loss"],
+                                    start=1,
+                                )
+                            ]
+                        ),
+                        hide_index=True,
+                        width="stretch",
+                    )
 
     with tabs[5]:
         rows = st.columns(4)
         rows[0].metric("Input rows", f"{quality['rows']['source']:,}")
         rows[1].metric("Invalid required rows", f"{quality['rows']['invalid_required_data']:,}")
         rows[2].metric("Repeated-distance samples retained", f"{quality['rows']['repeated_distance_samples']:,}")
-        rows[3].metric("Partial laps excluded", str(len(quality["laps"]["excluded_incomplete"])))
+        rows[3].metric(
+            "Laps excluded",
+            str(
+                len(quality["laps"]["excluded_incomplete"])
+                + len(quality["laps"].get("excluded_overlength", []))
+            ),
+        )
         st.subheader("Lap coverage")
+        overlength_laps = quality["laps"].get("excluded_overlength", [])
         st.dataframe(
             pd.DataFrame(
                 [
                     {
                         "Lap": float(lap),
                         "Distance (m)": distance,
-                        "Included": float(lap) in quality["laps"]["complete"],
+                        "Status": (
+                            "Included"
+                            if float(lap) in quality["laps"]["complete"]
+                            else "Overlength"
+                            if float(lap) in overlength_laps
+                            else "Incomplete"
+                        ),
                     }
                     for lap, distance in quality["laps"]["distance_m"].items()
                 ]
@@ -715,10 +885,26 @@ def main():
                 hide_index=True,
                 width="stretch",
             )
-        report = quality if alignment is None else {
-            "schema_version": 1,
-            "data_quality": quality,
-            "analysis": {
+        if alignment is None:
+            report = quality
+        else:
+            report_track_config = load_track_config(clean_frame)
+            driver_analysis_by_lap = {
+                str(float(lap_number)): (
+                    input_analysis
+                    if lap_number == input_lap
+                    else analyze_driver_inputs(
+                        clean_frame,
+                        lap_number,
+                        report_track_config,
+                    )
+                )
+                for lap_number in valid_lap_numbers(clean_frame)
+            }
+            report = {
+                "schema_version": 1,
+                "data_quality": quality,
+                "analysis": {
                 "reference_lap": float(lap_a),
                 "compared_lap": float(lap_b),
                 "reference_duration_seconds": alignment["lap_a_seconds"],
@@ -726,13 +912,25 @@ def main():
                 "delta_compared_lap_ahead_seconds": float(alignment["delta_b_ahead_s"][-1]),
                 "delta_method": "trapezoidal distance/speed integration",
                 "sector_results": (
-                    sector_results(clean_frame, lap_a, lap_b, load_track_config(clean_frame))
-                    if load_track_config(clean_frame)
+                    sector_results(clean_frame, lap_a, lap_b, report_track_config)
+                    if report_track_config
                     else []
                 ),
+                "corner_delta_breakdown": (
+                    corner_delta_breakdown(
+                        clean_frame,
+                        lap_a,
+                        lap_b,
+                        report_track_config,
+                    )
+                    if report_track_config
+                    else []
+                ),
+                "driver_input_analysis": input_analysis,
+                "driver_input_analysis_by_lap": driver_analysis_by_lap,
                 "optimal_lap": optimal_lap_analysis(clean_frame),
-            },
-        }
+                },
+            }
         report_bytes = json.dumps(report, indent=2).encode("utf-8")
         st.download_button(
             "Download session report (JSON)",

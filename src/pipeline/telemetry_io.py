@@ -368,15 +368,36 @@ def process_session(
                 raise ValueError(f"Could not read track configuration '{config_path}': {exc}") from exc
 
     lap_lengths = frame.groupby("Lap Number")["Normalized_Dist"].max()
-    reference_length = track_length or (float(lap_lengths.max()) if not lap_lengths.empty else 0)
+    if track_length is not None and (
+        not math.isfinite(track_length) or track_length <= 0
+    ):
+        raise ValueError("track_length must be finite and greater than zero.")
+    if track_length is not None:
+        reference_length = float(track_length)
+    elif not lap_lengths.empty:
+        reference_length = float(lap_lengths.max())
+    else:
+        reference_length = 0.0
+    maximum_fraction = float(config_value("data", "maximum_lap_fraction"))
+    if not math.isfinite(maximum_fraction) or maximum_fraction < 1:
+        raise ValueError("data.maximum_lap_fraction must be finite and at least 1.")
     threshold = reference_length * minimum_fraction
-    valid_laps = lap_lengths[lap_lengths >= threshold].index.tolist()
-    invalid_laps = lap_lengths[~lap_lengths.index.isin(valid_laps)].index.tolist()
+    maximum_distance = (
+        reference_length * maximum_fraction
+        if track_length is not None
+        else reference_length
+    )
+    complete_distance = (lap_lengths >= threshold) & (
+        lap_lengths <= maximum_distance
+    )
+    valid_laps = lap_lengths[complete_distance].index.tolist()
+    incomplete_laps = lap_lengths[lap_lengths < threshold].index.tolist()
+    overlength_laps = lap_lengths[lap_lengths > maximum_distance].index.tolist()
     result = frame[frame["Lap Number"].isin(valid_laps)].copy().reset_index(drop=True)
     if result.empty:
         raise ValueError(
-            f"No laps cover at least {minimum_fraction:.0%} of the reference distance "
-            f"({reference_length:.1f} m)."
+            "No laps fall within the accepted lap-distance range "
+            f"({threshold:.1f} m to {maximum_distance:.1f} m)."
         )
 
     median_window = int(
@@ -404,7 +425,9 @@ def process_session(
         "track": track_name,
         "reference_track_length_m": round(float(reference_length), 2),
         "minimum_lap_fraction": minimum_fraction,
+        "maximum_lap_fraction": maximum_fraction,
         "minimum_lap_distance_m": round(float(threshold), 2),
+        "maximum_lap_distance_m": round(float(maximum_distance), 2),
         "rows": {
             "source": quality.get("source_rows", len(frame)),
             "invalid_required_data": quality.get("invalid_required_rows", 0),
@@ -430,7 +453,8 @@ def process_session(
         "laps": {
             "total": int(len(lap_lengths)),
             "complete": [float(lap) for lap in valid_laps],
-            "excluded_incomplete": [float(lap) for lap in invalid_laps],
+            "excluded_incomplete": [float(lap) for lap in incomplete_laps],
+            "excluded_overlength": [float(lap) for lap in overlength_laps],
             "distance_m": {
                 str(lap): round(float(distance), 2)
                 for lap, distance in lap_lengths.items()
@@ -536,6 +560,31 @@ def _finite_segments(mask):
     return list(zip(changes[::2], changes[1::2]))
 
 
+def _configured_track_length(frame):
+    if "Track" not in frame.columns:
+        return None
+    tracks = frame["Track"].dropna().astype(str).unique()
+    if len(tracks) != 1:
+        return None
+    tracks_path = Path(__file__).resolve().parents[2] / "tracks"
+    config_path = tracks_path / f"{tracks[0]}.json"
+    if not config_path.is_file():
+        return None
+    try:
+        track_length = json.loads(config_path.read_text(encoding="utf-8")).get(
+            "total_length_m"
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read track configuration '{config_path}': {exc}") from exc
+    if (
+        not isinstance(track_length, (int, float))
+        or not math.isfinite(track_length)
+        or track_length <= 0
+    ):
+        raise ValueError(f"Track configuration '{config_path}' has an invalid total_length_m.")
+    return float(track_length)
+
+
 def valid_lap_numbers(frame, minimum_fraction=None, track_length=None):
     minimum_fraction = (
         float(config_value("data", "minimum_lap_fraction"))
@@ -545,12 +594,36 @@ def valid_lap_numbers(frame, minimum_fraction=None, track_length=None):
     if not 0 < minimum_fraction <= 1:
         raise ValueError("minimum_fraction must be greater than 0 and at most 1.")
     lap_lengths = frame.groupby("Lap Number")["Normalized_Dist"].max()
-    reference_length = track_length or lap_lengths.max()
-    return lap_lengths[lap_lengths >= minimum_fraction * reference_length].index.tolist()
+    if track_length is None:
+        track_length = _configured_track_length(frame)
+    if track_length is not None and (
+        not math.isfinite(track_length) or track_length <= 0
+    ):
+        raise ValueError("track_length must be finite and greater than zero.")
+    reference_length = (
+        float(track_length)
+        if track_length is not None
+        else float(lap_lengths.max()) if not lap_lengths.empty else 0.0
+    )
+    maximum_fraction = float(config_value("data", "maximum_lap_fraction"))
+    if not math.isfinite(maximum_fraction) or maximum_fraction < 1:
+        raise ValueError("data.maximum_lap_fraction must be finite and at least 1.")
+    maximum_distance = (
+        reference_length * maximum_fraction
+        if track_length is not None
+        else reference_length
+    )
+    valid = (lap_lengths >= minimum_fraction * reference_length) & (
+        lap_lengths <= maximum_distance
+    )
+    return lap_lengths[valid].index.tolist()
 
 
 def lap_time_seconds(lap):
     """Use recorded elapsed time where possible, otherwise integrate ds / speed."""
+    if lap_time_source(lap) == "recorded_lap_time":
+        recorded = pd.to_numeric(lap["Lap Time"], errors="coerce").dropna()
+        return float(recorded.max())
     if lap_time_source(lap) == "recorded_time":
         recorded = pd.to_numeric(lap["Time"], errors="coerce").dropna()
         return float(recorded.max() - recorded.min())
@@ -569,6 +642,12 @@ def lap_time_seconds(lap):
 
 
 def lap_time_source(lap):
+    if "Lap Time" in lap.columns:
+        recorded = pd.to_numeric(lap["Lap Time"], errors="coerce").dropna()
+        if len(recorded) > 1:
+            duration = float(recorded.max())
+            if math.isfinite(duration) and duration > 0:
+                return "recorded_lap_time"
     if "Time" in lap.columns:
         recorded = pd.to_numeric(lap["Time"], errors="coerce").dropna()
         if len(recorded) > 1:

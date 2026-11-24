@@ -1,10 +1,12 @@
 data:
   minimum_lap_fraction: 0.9
+  maximum_lap_fraction: 1.1
 
 analysis:
   spatial_grid_m: 1.0
   micro_sector_m: 50.0
   max_boundary_speed_delta_mps: 2.0
+  reference_lap_seconds: 144.638
 
 signal_filter:
   enabled: true

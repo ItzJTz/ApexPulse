@@ -46,6 +46,14 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(report["lap_comparison"]["reference_lap"], 2.0)
             self.assertEqual(report["lap_comparison"]["compared_lap"], 1.0)
+            self.assertEqual(
+                sorted(report["driver_input_analysis_by_lap"]),
+                ["1.0", "2.0"],
+            )
+            self.assertIn(
+                "double_braking_m",
+                report["driver_input_analysis"]["metrics"],
+            )
 
 
 if __name__ == "__main__":

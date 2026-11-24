@@ -3,11 +3,13 @@ import math
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from fastdtw import fastdtw
 from scipy.spatial.distance import euclidean
 
 from src.config import config_value
 from src.core.sector_analysis import _sector_time
+from src.core.driver_inputs import analyze_driver_inputs
 from src.core.math_channels import tire_metrics
 from src.core.spatial import interpolate_spatial
 from src.pipeline.telemetry_io import (
@@ -385,6 +387,90 @@ def sector_results(frame, lap_a, lap_b, track_config):
     return results
 
 
+def corner_delta_breakdown(
+    frame,
+    reference_lap,
+    compared_lap,
+    track_config,
+    reference_lap_seconds=None,
+):
+    """Compare corner times against a telemetry reference lap and rank time loss."""
+    if reference_lap == compared_lap:
+        raise ValueError("Choose different reference and compared laps.")
+    if not track_config:
+        return None
+    benchmark_seconds = (
+        float(config_value("analysis", "reference_lap_seconds"))
+        if reference_lap_seconds is None
+        else float(reference_lap_seconds)
+    )
+    if not math.isfinite(benchmark_seconds) or benchmark_seconds <= 0:
+        raise ValueError("reference_lap_seconds must be finite and greater than zero.")
+
+    laps = {
+        reference_lap: frame[frame["Lap Number"] == reference_lap].sort_values(
+            "Normalized_Dist"
+        ),
+        compared_lap: frame[frame["Lap Number"] == compared_lap].sort_values(
+            "Normalized_Dist"
+        ),
+    }
+    reference_duration = lap_time_seconds(laps[reference_lap])
+    elapsed = pd.to_numeric(
+        laps[reference_lap].get("Time", pd.Series(dtype=float)),
+        errors="coerce",
+    ).dropna().sort_values().to_numpy(dtype=float)
+    sample_intervals = np.diff(elapsed)
+    sample_intervals = sample_intervals[
+        np.isfinite(sample_intervals) & (sample_intervals > 0)
+    ]
+    benchmark_tolerance = (
+        max(0.001, float(np.median(sample_intervals)))
+        if len(sample_intervals)
+        else 0.001
+    )
+    corners = []
+    for corner in track_config.get("corner_metadata", []):
+        bounds = (float(corner["start_m"]), float(corner["end_m"]))
+        reference_time = _sector_time(laps[reference_lap], *bounds)
+        compared_time = _sector_time(laps[compared_lap], *bounds)
+        if reference_time is None or compared_time is None:
+            continue
+        corners.append(
+            {
+                "corner": f"{corner.get('id', '')} {corner.get('name', '')}".strip(),
+                "start_m": bounds[0],
+                "end_m": bounds[1],
+                "reference_time_seconds": reference_time,
+                "compared_time_seconds": compared_time,
+                "time_loss_seconds": compared_time - reference_time,
+            }
+        )
+    cumulative_loss = 0.0
+    for corner in sorted(corners, key=lambda item: item["start_m"]):
+        cumulative_loss += corner["time_loss_seconds"]
+        corner["cumulative_time_loss_seconds"] = cumulative_loss
+    return {
+        "reference_lap": float(reference_lap),
+        "compared_lap": float(compared_lap),
+        "reference_lap_seconds": reference_duration,
+        "compared_lap_seconds": lap_time_seconds(laps[compared_lap]),
+        "reference_benchmark_seconds": benchmark_seconds,
+        "reference_matches_benchmark": math.isclose(
+            reference_duration,
+            benchmark_seconds,
+            rel_tol=0.0,
+            abs_tol=benchmark_tolerance,
+        ),
+        "corners_in_distance_order": corners,
+        "ranked_by_time_loss": sorted(
+            corners,
+            key=lambda item: item["time_loss_seconds"],
+            reverse=True,
+        ),
+    }
+
+
 def load_track_config(frame, tracks_dir=None):
     if "Track" not in frame.columns or frame["Track"].nunique() != 1:
         return None
@@ -407,6 +493,22 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
     aligned = align_laps(frame, lap_a, lap_b, grid_step)
     config = load_track_config(frame)
     sectors = sector_results(frame, lap_a, lap_b, config) if config else []
+    corner_deltas = corner_delta_breakdown(frame, lap_a, lap_b, config) if config else []
+    driver_inputs_by_lap = {
+        str(float(lap_number)): analyze_driver_inputs(
+            frame,
+            lap_number,
+            track_config=config,
+        )
+        for lap_number in valid_lap_numbers(frame)
+    }
+    driver_inputs = driver_inputs_by_lap.get(str(float(lap_a)))
+    if driver_inputs is None:
+        driver_inputs = analyze_driver_inputs(
+            frame,
+            lap_a,
+            track_config=config,
+        )
     tire = tire_metrics(frame)
     thermal = tire["thermal_gradient"]
     return {
@@ -425,6 +527,9 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
             "delta_method": "trapezoidal distance/speed integration",
         },
         "sector_results": sectors,
+        "corner_delta_breakdown": corner_deltas,
+        "driver_input_analysis": driver_inputs,
+        "driver_input_analysis_by_lap": driver_inputs_by_lap,
         "optimal_lap": optimal_lap_analysis(frame),
         "tire_analysis": {
             "friction_circle_area_g2_by_lap": {

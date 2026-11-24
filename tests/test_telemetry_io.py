@@ -120,6 +120,41 @@ class TelemetryIoTests(unittest.TestCase):
             10.0,
         )
 
+    def test_prefers_lap_timer_over_session_elapsed_time(self):
+        lap = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1, 1, 1],
+                    "Lap Distance": [0, 50, 100],
+                    "Ground Speed": [36, 36, 36],
+                    "Time": [10, 15, 20],
+                    "Lap Time": [0, 2.4, 4.8],
+                }
+            )
+        )
+
+        self.assertAlmostEqual(lap_time_seconds(lap), 4.8)
+
+    def test_track_length_excludes_overlong_and_incomplete_laps(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Time": [0, 1, 2, 3, 4, 5],
+                    "Lap Number": [0, 0, 1, 1, 2, 2],
+                    "Lap Distance": [0, 8167, 0, 5500, 0, 200],
+                    "Ground Speed": [100] * 6,
+                    "Track": ["Sepang"] * 6,
+                }
+            )
+        )
+
+        clean, report = process_session(frame, rolling_median_window=1)
+
+        self.assertEqual(report["laps"]["complete"], [1.0])
+        self.assertEqual(report["laps"]["excluded_overlength"], [0.0])
+        self.assertEqual(report["laps"]["excluded_incomplete"], [2.0])
+        self.assertEqual(valid_lap_numbers(clean), [1])
+
     def test_session_report_accounts_for_bad_rows_duplicates_and_partial_laps(self):
         frame = prepare_telemetry_frame(
             pd.DataFrame(
