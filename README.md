@@ -10,6 +10,7 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 
 * **Zero-Touch Automated Data Pipeline:** Parses raw multi-row header metadata, applies rolling-median and zero-phase Butterworth filtering where timestamps support it, quarantines configured impossible speed/G samples, auto-detects track identity, and exports normalized datasets.
 * **Shared Telemetry Ingestion:** Canonicalizes lap, distance, and speed channels, sorts samples, reports invalid and repeated-distance rows, and uses a single lap-distance definition across ingestion and comparison. Valid samples at repeated distances are retained for time-based analysis.
+* **MoTeC LD Import:** Loads standard MoTeC i2 `.ld` sessions directly in the dashboard and CLI, aligns different-rate numeric channels to a shared time grid, preserves channel units and native sample rates, and converts recognized speed/distance units into km/h and meters. Converted/cleaned telemetry can be downloaded as CSV. `.ldx` files are not supported; export those sessions as CSV from MoTeC i2. The binary reader is based on the reverse-engineered standard `.ld` layout and has safety limits for malformed or unusually large files.
 * **Interactive Session Dashboard:** Presents lap speed/delta, optional speed-profile DTW diagnostics, driver inputs, cross-session comparison, G-G sample density, track views, sector estimates, constrained optimal-lap analysis, tire metrics when channels exist, and data-quality details.
 * **Reproducible Session Reports:** Writes a cleaned CSV, a data-quality JSON report, and a session report with selected-lap and sector comparisons.
 * **Configurable Cubic-Spline Spatial Alignment:** Interpolates telemetry onto a uniform spatial grid (1 m by default); cubic splines preserve first- and second-derivative continuity, with a linear fallback when fewer than three unique samples are available.
@@ -24,7 +25,7 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 * **Physics-Guarded Optimal Lap:** Uses dynamic programming to select the fastest sector combination that meets a configured speed-continuity tolerance at each splice. This remains a modeled benchmark, not a validated full vehicle simulation.
 * **Conditional Tire Analytics:** Computes observed G-G envelope area, inner/outer temperature gradient, and a steering-speed-lateral-G integral only when required channels are present; missing channels are reported rather than fabricated.
 * **Vehicle-Dynamics Estimates:** Calculates corner radius as $v^2 / |a_{lat}|$ (converting km/h to m/s and masking near-zero lateral G), per-wheel longitudinal slip against logged Ground Speed, and front/rear ride-height or suspension movement relative to a low-speed baseline. Slip from angular wheel-speed sensors requires a measured loaded tire radius and known units; unavailable inputs remain explicitly unavailable. Suspension motion is a proxy, not a direct downforce or center-of-pressure measurement.
-* **Brake-Input Classification:** Reports brake ramp-up, release slopes, and brake-pressure decay as steering increases through each braking episode; abrupt release uses the configured 600 %/s default above 60 km/h, while lower-speed abrupt releases are identified separately.
+* **Brake-Input Classification:** Reports brake ramp-up, release slopes, and brake-pressure decay as steering increases through each braking episode. Brake rates use a centered 3-sample smoothing window and a 4-interval slope (80 ms at 50 Hz) to reduce trigger quantization; abrupt release uses the configured 600 %/s default above 60 km/h, while lower-speed abrupt releases are identified separately.
 * **Stint Pace Forecast:** Fits an interpretable least-squares lap-time trend for stints with at least 15 complete laps, reports fit quality and observed tire temperature/pressure trends where available, and projects when pace crosses the configured threshold. It is a pace forecast, not proof of tire-caused degradation.
 
 ---
@@ -96,9 +97,11 @@ In VS Code, select `.venv\Scripts\python.exe` with **Python: Select Interpreter*
 
 ### 2. Clean a session and create reports
 
-Run from the repository root. The input may be a raw MoTeC-style CSV or a previously cleaned CSV:
+Run from the repository root. The input may be a standard MoTeC i2 `.ld` file, a raw MoTeC-style CSV, or a previously cleaned CSV:
 
     .\.venv\Scripts\python.exe -m src.cli clean data\raw_telemetrySilverstone.csv --output-dir reports
+
+The dashboard accepts `.ld` and `.csv` uploads. It converts `.ld` channel data to the dashboard's aligned telemetry table; in the **Data quality** tab, download the converted/cleaned data as CSV. `.ldx` files are not supported—export them to CSV in MoTeC i2 first. For channels recorded at different rates, values are resampled to a shared timeline at the highest supported channel rate; discrete lap and gear channels use nearest-sample alignment. The importer converts recognized speed units (mph or m/s) to km/h and distance units to meters, and reports assumptions for unrecognized units.
 
 The command writes three artifacts into `reports/`: a normalized, complete-lap CSV; a data-quality JSON file with quarantined rows, channel mappings, units when supplied, missing optional-channel rates, and lap coverage; and a session JSON report with driver-input and vehicle-dynamics summaries for each valid lap, lap/sector comparisons, a stint forecast when at least 15 laps are available, and physically constrained optimal-lap analysis. Use `--minimum-lap-fraction` to adjust the complete-lap threshold, or `--report-json path.json` to choose the session-report location. Defaults are centralized in `config.yaml`.
 
@@ -112,7 +115,7 @@ Start the dashboard from the repository root:
 
 Then follow these steps:
 
-1. In the left sidebar, either upload a telemetry CSV or choose a CSV already in `data/`. If a file is uploaded, it takes precedence over the local-file selector.
+1. In the left sidebar, either upload a MoTeC `.ld` file or telemetry CSV, or choose a `.ld`/`.csv` file already in `data/`. If a file is uploaded, it takes precedence over the local-file selector.
 2. Set **Minimum lap coverage**. The default is 90%; increase it to exclude more partial laps or lower it only when appropriate for your session.
 3. Select a **Reference lap** and a **Compared lap**. The dashboard initially selects the two fastest valid laps; you can change either selection.
 4. Open the tabs to review the session:

@@ -10,6 +10,7 @@ import pandas as pd
 from scipy.signal import butter, filtfilt
 
 from src.config import config_value
+from src.pipeline.motec_ld import parse_motec_ld
 
 
 REQUIRED_CHANNELS = ("Lap Number", "Lap Distance", "Ground Speed")
@@ -25,6 +26,128 @@ def _is_number(value):
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _convert_motec_units(frame, channel_units):
+    normalized_columns = {_key(column): column for column in frame.columns}
+    speed_column = next(
+        (
+            normalized_columns[_key(name)]
+            for name in ("Ground Speed", "Speed")
+            if _key(name) in normalized_columns
+        ),
+        None,
+    )
+    if speed_column is None:
+        speed_column = next(
+            (
+                column
+                for column in frame.columns
+                if "speed" in _key(column)
+                and not any(
+                    token in _key(column)
+                    for token in ("wheel", "tyre", "tire")
+                )
+            ),
+            None,
+        )
+    distance_column = next(
+        (
+            normalized_columns[_key(name)]
+            for name in ("Lap Distance", "Lap Dist")
+            if _key(name) in normalized_columns
+        ),
+        None,
+    )
+    if distance_column is None:
+        distance_column = next(
+            (
+                column
+                for column in frame.columns
+                if "lap" in _key(column) and "dist" in _key(column)
+            ),
+            None,
+        )
+    if distance_column is None:
+        distance_column = next(
+            (
+                normalized_columns[_key(name)]
+                for name in ("Distance", "Dist")
+                if _key(name) in normalized_columns
+            ),
+            None,
+        )
+    warnings = []
+    conversions = (
+        (
+            speed_column,
+            {
+                "mph": (1.609344, "km/h"),
+                "mi/h": (1.609344, "km/h"),
+                "m/s": (3.6, "km/h"),
+                "mps": (3.6, "km/h"),
+            },
+            {"km/h", "kmh", "kph", "km/hr"},
+            "km/h",
+            "Ground Speed",
+        ),
+        (
+            distance_column,
+            {
+                "km": (1000.0, "m"),
+                "cm": (0.01, "m"),
+                "mm": (0.001, "m"),
+                "ft": (0.3048, "m"),
+                "feet": (0.3048, "m"),
+                "mi": (1609.344, "m"),
+                "mile": (1609.344, "m"),
+                "miles": (1609.344, "m"),
+                "yd": (0.9144, "m"),
+            },
+            {"m", "meter", "meters", "metre", "metres"},
+            "m",
+            "Lap Distance",
+        ),
+    )
+    for column, scales, accepted_units, target_unit, channel_label in conversions:
+        if column is None:
+            continue
+        source_unit = str(channel_units.get(column, "")).casefold().strip()
+        normalized_unit = source_unit.replace(" ", "")
+        if normalized_unit in accepted_units:
+            channel_units[column] = target_unit
+        elif normalized_unit in scales:
+            multiplier, converted_unit = scales[normalized_unit]
+            frame[column] = pd.to_numeric(frame[column], errors="coerce") * multiplier
+            channel_units[column] = converted_unit
+            warnings.append(
+                f"{channel_label} in {source_unit} was converted to {converted_unit}."
+            )
+        else:
+            warnings.append(
+                f"{channel_label} unit {source_unit or '(missing)'} is not recognized; "
+                f"the value was assumed to be in {target_unit}."
+            )
+    return warnings
+
+
+def _load_motec_ld(content, source_name, tracks_dir=None):
+    raw_frame, metadata, units, channel_sample_rates = parse_motec_ld(content)
+    conversion_warnings = _convert_motec_units(raw_frame, units)
+    prepared = prepare_telemetry_frame(
+        raw_frame,
+        source_name,
+        metadata,
+        tracks_dir,
+    )
+    quality = prepared.attrs["quality"]
+    quality["channel_units"] = units
+    quality["channel_sample_rates_hz"] = channel_sample_rates
+    quality["conversion_warnings"] = conversion_warnings
+    quality["source_file"] = source_name
+    quality["source_format"] = "MoTeC LD"
+    quality["source_metadata"] = metadata
+    return prepared
 
 
 def _resolve_track(path, metadata, tracks_dir=None):
@@ -359,11 +482,35 @@ def load_telemetry_text(content, source_name="uploaded.csv", tracks_dir=None):
     return _load_telemetry_text(content, source_name, tracks_dir)
 
 
+def load_telemetry_content(content, source_name="uploaded.csv", tracks_dir=None):
+    """Load uploaded CSV text/bytes or native MoTeC LD binary content."""
+    suffix = Path(source_name).suffix.casefold()
+    if suffix == ".ldx":
+        raise ValueError(
+            "MoTeC .ldx files are not supported. Upload the matching .ld file "
+            "or export the session as CSV from MoTeC i2."
+        )
+    if suffix == ".ld":
+        return _load_motec_ld(content, source_name, tracks_dir)
+    return load_telemetry_text(content, source_name, tracks_dir)
+
+
 def load_telemetry(path, tracks_dir=None):
     """Read raw MoTeC-style or cleaned CSV files into the canonical frame."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"Telemetry file not found: '{path}'.")
+    if path.suffix.casefold() == ".ldx":
+        raise ValueError(
+            "MoTeC .ldx files are not supported. Use the matching .ld file "
+            "or export the session as CSV from MoTeC i2."
+        )
+    if path.suffix.casefold() == ".ld":
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise OSError(f"Could not read telemetry file '{path}': {exc}") from exc
+        return _load_motec_ld(content, str(path), tracks_dir)
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError as exc:
@@ -456,6 +603,7 @@ def process_session(
     report = {
         "schema_version": 1,
         "source_file": quality.get("source_file"),
+        "source_format": quality.get("source_format", "CSV"),
         "track": track_name,
         "reference_track_length_m": round(float(reference_length), 2),
         "minimum_lap_fraction": minimum_fraction,
@@ -483,6 +631,9 @@ def process_session(
             "required_mapping": quality.get("required_channel_mapping", {}),
             "available": quality.get("source_channels", list(frame.columns)),
             "units": quality.get("channel_units", {}),
+            "sample_rates_hz": quality.get("channel_sample_rates_hz", {}),
+            "conversion_warnings": quality.get("conversion_warnings", []),
+            "source_metadata": quality.get("source_metadata", {}),
             "optional_missing_percent": quality.get("optional_channel_missing_percent", {}),
         },
         "laps": {

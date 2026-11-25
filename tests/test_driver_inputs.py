@@ -66,7 +66,7 @@ class DriverInputTests(unittest.TestCase):
         result = analyze_driver_inputs(frame, 1, track_config)
 
         self.assertEqual(len(result["metrics"]["double_braking_m"]), 1)
-        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 2)
+        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 0)
         self.assertAlmostEqual(result["metrics"]["trail_brake_overlap_pct"], 200 / 3)
         self.assertEqual(len(result["metrics"]["loaded_throttle_snaps_m"]), 1)
         self.assertEqual(len(result["metrics"]["throttle_hesitations_m"]), 1)
@@ -74,13 +74,44 @@ class DriverInputTests(unittest.TestCase):
         self.assertEqual(len(result["metrics"]["loaded_downshifts_m"]), 1)
         self.assertTrue(result["clusters"])
         self.assertEqual(result["clusters"][0]["corner"], "T1 Test corner")
-        self.assertEqual(
-            sorted(
-                event["sample_count"]
+        self.assertFalse(
+            any(
+                event["detector"] == "abrupt_brake_release_m"
                 for event in result["events"]
-                if event["detector"] == "abrupt_brake_release_m"
-            ),
-            [1, 2],
+            )
+        )
+
+    def test_abrupt_brake_detector_uses_smoothed_release_rates(self):
+        count = 500
+        brake = np.zeros(count)
+        brake[40:45] = [100, 75, 50, 25, 0]
+        brake[180:185] = [100, 75, 50, 25, 0]
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * count,
+                    "Lap Distance": np.arange(count, dtype=float) * 2,
+                    "Ground Speed": np.full(count, 100.0),
+                    "Time": np.arange(count, dtype=float) / 50,
+                    "Throttle Pos": np.zeros(count),
+                    "Brake Pos": brake,
+                    "Steering": np.zeros(count),
+                    "Gear": np.full(count, 4.0),
+                }
+            )
+        )
+
+        result = analyze_driver_inputs(frame, 1)
+
+        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 2)
+        abrupt_events = [
+            event
+            for event in result["events"]
+            if event["detector"] == "abrupt_brake_release_m"
+        ]
+        self.assertEqual(len(abrupt_events), 2)
+        self.assertTrue(
+            all(event["slope_percent_s"] <= -600 for event in abrupt_events)
         )
 
     def test_cluster_distances_uses_consecutive_gap_threshold(self):

@@ -30,7 +30,7 @@ from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     lap_time_seconds,
     load_telemetry,
-    load_telemetry_text,
+    load_telemetry_content,
     process_session,
     valid_lap_numbers,
 )
@@ -45,7 +45,7 @@ def _load_local(path, modified_time):
 
 @st.cache_data(show_spinner=False)
 def _load_upload(content, filename):
-    return load_telemetry_text(content, filename)
+    return load_telemetry_content(content, filename)
 
 
 def _channel_trace(frame, lap_number, distance, channel):
@@ -392,18 +392,28 @@ def main():
     )
 
     data_directory = Path(__file__).resolve().parents[2] / "data"
-    local_files = sorted(data_directory.glob("*.csv"))
+    local_files = sorted(
+        list(data_directory.glob("*.csv"))
+        + list(data_directory.glob("*.ld"))
+    )
     preferred = next(
         (index for index, path in enumerate(local_files) if path.name.startswith("raw_")),
         0,
     )
     with st.sidebar:
         st.header("Session")
-        upload = st.file_uploader("Upload a telemetry CSV", type=("csv",))
+        upload = st.file_uploader(
+            "Upload MoTeC LD or telemetry CSV",
+            type=("ld", "csv"),
+            help=(
+                "MoTeC .ld files are converted to aligned telemetry channels. "
+                "MoTeC .ldx files are not supported; export those sessions as CSV in MoTeC i2."
+            ),
+        )
         local_path = None
         if local_files:
             selected_name = st.selectbox(
-                "Or choose a local CSV",
+                "Or choose a local session",
                 [path.name for path in local_files],
                 index=preferred,
                 disabled=upload is not None,
@@ -424,7 +434,9 @@ def main():
         )
 
     if upload is None and local_path is None:
-        st.info("Upload a telemetry CSV or place one in the repository's data folder.")
+        st.info(
+            "Upload a MoTeC .ld file or telemetry CSV, or place one in the repository's data folder."
+        )
         return
     try:
         with st.spinner("Loading and validating telemetry..."):
@@ -480,6 +492,13 @@ def main():
 
     track_label = quality.get("track") or "Track not identified"
     st.subheader(f"{track_label} · {Path(quality['source_file']).name}")
+    if quality.get("source_format") == "MoTeC LD":
+        st.caption(
+            "MoTeC LD converted to aligned telemetry channels. "
+            "The cleaned CSV download is the converted output."
+        )
+    for warning in quality.get("channels", {}).get("conversion_warnings", []):
+        st.warning(warning)
     if not quality.get("track"):
         st.warning("No matching track configuration was detected. Lap comparisons work; track sectors are unavailable.")
     if lap_b is None:
@@ -1204,7 +1223,7 @@ def main():
             mime="application/json",
         )
         st.download_button(
-            "Download cleaned telemetry (CSV)",
+            "Download converted/cleaned telemetry (CSV)",
             data=clean_frame.to_csv(index=False).encode("utf-8"),
             file_name=f"{Path(quality['source_file']).stem}_cleaned.csv",
             mime="text/csv",

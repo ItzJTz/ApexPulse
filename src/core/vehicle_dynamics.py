@@ -8,6 +8,10 @@ import pandas as pd
 
 from src.config import config_value
 from src.core.driver_inputs import auto_detect_apexes
+from src.core.signal_rates import (
+    PEDAL_SLOPE_SAMPLES,
+    smoothed_derivative,
+)
 from src.pipeline.telemetry_io import lap_time_seconds, valid_lap_numbers
 
 
@@ -270,11 +274,7 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
         else 1.0 / sample_rate_hz
     )
     delta_time[~valid_dt] = fallback_dt
-    brake_slope = (
-        np.diff(brake) / delta_time
-        if len(brake) > 1
-        else np.array([], dtype=float)
-    )
+    brake_slope = smoothed_derivative(brake, delta_time)
     steering_magnitude = np.abs(steering)
     braking = np.isfinite(brake) & (brake >= threshold)
     padded = np.concatenate(([False], braking, [False]))
@@ -285,29 +285,38 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
         if stop - start < 2:
             continue
         local_brake = brake[start:stop]
-        local_slopes = brake_slope[max(0, start - 1) : max(0, stop - 1)]
+        center_indices = np.arange(start, stop)
+        slope_indices = center_indices + PEDAL_SLOPE_SAMPLES // 2
+        valid_slope_indices = slope_indices < len(brake_slope)
+        center_indices = center_indices[valid_slope_indices]
+        slope_indices = slope_indices[valid_slope_indices]
+        local_slopes = brake_slope[slope_indices]
         local_slopes = local_slopes[np.isfinite(local_slopes)]
-        release_pairs = np.arange(max(0, start - 1), max(0, stop - 1))
-        release_pairs = release_pairs[
-            (release_pairs + 1 < len(brake))
-            & np.isfinite(brake_slope[release_pairs])
-            & (brake_slope[release_pairs] < 0)
-        ]
-        high_speed_release_pairs = release_pairs[
-            np.isfinite(speed[release_pairs + 1])
-            & (speed[release_pairs + 1] > abrupt_minimum_speed)
-        ]
-        turning_release = release_pairs[
-            np.isfinite(steering_magnitude[release_pairs])
-            & np.isfinite(steering_magnitude[release_pairs + 1])
+        release_mask = (
+            np.isfinite(brake_slope[slope_indices])
+            & (brake_slope[slope_indices] < 0)
+        )
+        release_slope_indices = slope_indices[release_mask]
+        release_center_indices = center_indices[release_mask]
+        high_speed_release_mask = (
+            np.isfinite(speed[release_center_indices])
+            & (speed[release_center_indices] > abrupt_minimum_speed)
+        )
+        high_speed_release_indices = release_slope_indices[high_speed_release_mask]
+
+        turning_release_mask = (
+            (release_center_indices > 0)
+            & np.isfinite(steering_magnitude[release_center_indices])
+            & np.isfinite(steering_magnitude[np.maximum(release_center_indices - 1, 0)])
             & (
-                steering_magnitude[release_pairs + 1]
-                > steering_magnitude[release_pairs]
+                steering_magnitude[release_center_indices]
+                > steering_magnitude[np.maximum(release_center_indices - 1, 0)]
             )
-        ]
-        if len(turning_release) >= 2:
-            brake_values = brake[turning_release + 1]
-            steering_values = steering_magnitude[turning_release + 1]
+        )
+        turning_release_indices = release_center_indices[turning_release_mask]
+        if len(turning_release_indices) >= 2:
+            brake_values = brake[turning_release_indices]
+            steering_values = steering_magnitude[turning_release_indices]
             correlation = (
                 float(np.corrcoef(brake_values, steering_values)[0, 1])
                 if np.std(brake_values) > 0 and np.std(steering_values) > 0
@@ -323,13 +332,13 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
             decay_per_degree = None
 
         peak_release = (
-            float(np.min(brake_slope[release_pairs]))
-            if len(release_pairs)
+            float(np.min(brake_slope[release_slope_indices]))
+            if len(release_slope_indices)
             else None
         )
         peak_high_speed_release = (
-            float(np.min(brake_slope[high_speed_release_pairs]))
-            if len(high_speed_release_pairs)
+            float(np.min(brake_slope[high_speed_release_indices]))
+            if len(high_speed_release_indices)
             else None
         )
         ramp_slopes = local_slopes[local_slopes > 0]

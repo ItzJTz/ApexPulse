@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
+from src.core.signal_rates import (
+    PEDAL_SLOPE_SAMPLES,
+    smoothed_derivative,
+)
+
 
 DEFAULT_SAMPLE_RATE_HZ = 50.0
 EVENT_CLUSTER_DISTANCE_M = 40.0
@@ -393,19 +398,22 @@ def analyze_driver_inputs(
 
     if count > 1:
         delta_time = channels["Delta Time"]
-        brake_slope = np.diff(brake) / delta_time
+        brake_slope = smoothed_derivative(brake, delta_time)
         throttle_slope = np.diff(throttle) / delta_time
-        speed_at_change = speed[1:]
-        steering_at_change = steering[1:]
-        for offset in np.flatnonzero(
-            (brake_slope < -600)
-            & (speed_at_change > 60)
-            & np.isfinite(brake_slope)
+        for slope_index in np.flatnonzero(
+            (brake_slope < -600) & np.isfinite(brake_slope)
         ):
-            index = int(offset + 1)
+            index = max(0, int(slope_index) - PEDAL_SLOPE_SAMPLES // 2)
+            if not np.isfinite(speed[index]) or speed[index] <= 60:
+                continue
             events_by_detector["abrupt_brake_release_m"].append(
-                _event(distance[index], index, slope_percent_s=float(brake_slope[offset]))
+                _event(
+                    distance[index],
+                    index,
+                    slope_percent_s=float(brake_slope[slope_index]),
+                )
             )
+        steering_at_change = steering[1:]
         for offset in np.flatnonzero(
             (throttle_slope > 800)
             & (np.abs(steering_at_change) > 20)

@@ -94,7 +94,7 @@ class VehicleDynamicsTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual(result["abrupt_release_count"], 1)
         self.assertEqual(result["braking_episodes"][0]["classification"], "abrupt release")
-        self.assertAlmostEqual(result["maximum_ramp_up_pct_s"], 2500)
+        self.assertAlmostEqual(result["maximum_ramp_up_pct_s"], 1166.6666666666665)
         self.assertLess(result["steepest_release_pct_s"], -600)
         self.assertIsNotNone(
             result["braking_episodes"][0]["brake_decay_pct_per_steering_degree"]
@@ -105,6 +105,36 @@ class VehicleDynamicsTests(unittest.TestCase):
         slow_result = brake_input_analysis(slow_lap)
         self.assertEqual(slow_result["abrupt_release_count"], 0)
         self.assertEqual(slow_result["low_speed_abrupt_release_count"], 1)
+
+    def test_brake_release_rate_uses_a_rolling_80ms_window(self):
+        sample_count = 30
+        time = np.arange(sample_count) / 50
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": np.arange(sample_count) * 2,
+                "Time": time,
+                "Ground Speed": np.full(sample_count, 100),
+                "Brake Pos": np.r_[np.full(5, 100), np.zeros(sample_count - 5)],
+                "Steering": np.zeros(sample_count),
+            }
+        )
+
+        abrupt_result = brake_input_analysis(lap)
+        controlled_lap = lap.copy()
+        controlled_lap["Brake Pos"] = np.r_[
+            np.linspace(100, 0, 19),
+            np.zeros(sample_count - 19),
+        ]
+        controlled_result = brake_input_analysis(controlled_lap)
+
+        self.assertAlmostEqual(abrupt_result["steepest_release_pct_s"], -1250)
+        self.assertEqual(abrupt_result["abrupt_release_count"], 1)
+        self.assertAlmostEqual(
+            controlled_result["steepest_release_pct_s"],
+            -100 / 0.36,
+            delta=1,
+        )
+        self.assertEqual(controlled_result["abrupt_release_count"], 0)
 
     def test_degradation_forecast_requires_fifteen_laps_and_fits_trend(self):
         rows = []
