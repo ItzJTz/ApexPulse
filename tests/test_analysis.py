@@ -14,8 +14,8 @@ from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 class LapAlignmentTests(unittest.TestCase):
     def test_reference_benchmark_is_selected_by_track(self):
-        self.assertEqual(reference_lap_target_seconds("Sepang"), 144.638)
-        self.assertEqual(reference_lap_target_seconds("Unknown"), 144.638)
+        self.assertEqual(reference_lap_target_seconds("Sepang"), 144.650)
+        self.assertEqual(reference_lap_target_seconds("Unknown"), 144.650)
 
     def test_delta_is_positive_when_compared_lap_is_faster_and_includes_endpoint(self):
         frame = prepare_telemetry_frame(

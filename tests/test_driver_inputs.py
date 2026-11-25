@@ -376,7 +376,7 @@ class DriverInputTests(unittest.TestCase):
             ]
         }
 
-        result = corner_delta_breakdown(frame, 1, 2, track_config, 144.638)
+        result = corner_delta_breakdown(frame, 1, 2, track_config, 144.650)
 
         self.assertAlmostEqual(result["reference_lap_seconds"], 144.65)
         self.assertTrue(result["reference_matches_benchmark"])

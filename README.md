@@ -20,7 +20,7 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 * **Config-Driven Corner Sector Analysis:** Reads JSON distance gates to evaluate corner minimum speed ($\text{V-Min}$) and sector time deltas.
 * **Automated Driver-Input Detectors:** Checks brake double-application and release, trail-brake overlap, loaded throttle snaps, throttle hesitations, dead coasting, and loaded downshifts. Rates use recorded channel sample rates when available, otherwise telemetry timestamps, with a 50 Hz fallback.
 * **Spatial Mistake Clustering:** Merges repeat trigger samples within 40 m before detector counts and event tables are produced. Event corner labels use local ground-speed minima from each lap, so numbering adapts to track variants; these candidates are estimates, not surveyed geometry.
-* **Corner Delta Ranking:** Compares selected-lap corner times against an actual telemetry reference lap, reports cumulative time loss in track order, and ranks the largest losses. The Sepang 2:24.638 benchmark is a lap-time target only; corner deltas require the reference lap's telemetry trace.
+* **Corner Delta Ranking:** Compares selected-lap corner times against an actual telemetry reference lap, reports cumulative time loss in track order, and ranks the largest losses. The Sepang 2:24.650 benchmark is the fastest lap recorded in the supplied CSV; corner deltas require the reference lap's telemetry trace.
 * **Automated Lap Validation:** Excludes laps below a configurable minimum distance-coverage threshold and rejects overlength laps against known track geometry before analysis.
 * **Physics-Guarded Optimal Lap:** Uses dynamic programming to select the fastest sector combination that meets a configured speed-continuity tolerance at each splice. This remains a modeled benchmark, not a validated full vehicle simulation.
 * **Conditional Tire Analytics:** Computes observed G-G envelope area, inner/outer temperature gradient, and a steering-speed-lateral-G integral only when required channels are present; missing channels are reported rather than fabricated.
@@ -41,7 +41,7 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
     │   ├── telemetry_traces.png
     │   ├── time_delta.png
     │   └── track_map.png
-    ├── data/                    # Local input files (kept out of Git)
+    ├── data/                    # Supplied reference telemetry
     │   ├── 2_24_638_PB.csv       # Four-lap Sepang PB session
     │   └── raw_telemetry.ld      # BMW M235i at Sepang; one complete lap
     ├── config.yaml              # Shared coverage, grid, filter, and physics defaults
@@ -77,7 +77,7 @@ The source tree is divided into `src/pipeline/`, `src/core/`, and `src/visualiza
 
 Track identity is read from the filename or telemetry metadata. The default `2_24_638_PB.csv` is a four-complete-lap Sepang session and supports lap/stint analysis. `raw_telemetry.ld` is a separate BMW M235i MoTeC sample at Sepang, retained to validate LD importing; it has one complete lap.
 
-Keep local telemetry in `data/`; the two reference files and generated cleaned CSVs are ignored by Git so raw telemetry is not uploaded accidentally.
+The supplied Sepang PB CSV and BMW MoTeC LD are included under `data/`. Generated cleaned CSVs remain ignored by Git.
 
 ---
 
@@ -124,7 +124,7 @@ Then follow these steps:
    * **Vehicle dynamics:** selected-lap corner-radius estimates, wheel-slip traces when wheel speed and loaded radius are available, suspension/ride-height movement relative to a low-speed baseline, and brake ramp/release analysis. Slip is referenced to logged Ground Speed (not GPS speed); sensor and vehicle calibration are required for physical interpretation.
    * **G-G:** measured lateral/longitudinal acceleration sample density. Brighter cells mean more samples in that acceleration range; empty ranges are blank. Lateral G is signed left/right. Longitudinal G is sign-inverted, so positive means acceleration and negative means braking. It does not claim to estimate a validated tire-grip envelope.
    * **Track map:** logged GPS positions or vehicle coordinates when present; otherwise an explicitly labeled approximate path from lateral acceleration. Numbered corner markers use approximate apex distances from the track configuration. Assetto Corsa channels such as `Car Coord X`/`Car Coord Y` and `CG Accel Lateral`/`CG Accel Longitudinal` are recognized.
-   * **Sectors:** minimum speeds and distance-integrated sector and corner times when the track is identified and a matching configuration is available. Corner deltas compare the selected laps and rank losses against the selected reference trace. The 2:24.638 Sepang target cannot provide corner-by-corner data unless a matching reference lap is present. Corner distances from published layouts are approximate and should be checked against telemetry.
+   * **Sectors:** minimum speeds and distance-integrated sector and corner times when the track is identified and a matching configuration is available. Corner deltas compare the selected laps and rank losses against the selected reference trace. The 2:24.650 Sepang target cannot provide corner-by-corner data unless a matching reference lap is present. Corner distances from published layouts are approximate and should be checked against telemetry.
    * **Data quality:** included/excluded laps, dropped/duplicate rows, optional-channel completeness, and downloads for the cleaned CSV and JSON report.
    * **Driver comparison:** upload a second session to compare its fastest complete lap with the fastest complete lap from the main session. Both files should be from the same circuit and use compatible distance units. If track metadata is missing, confirm this manually in the tab.
    * **Optimal lap:** uses dynamic programming to choose the fastest micro-sector combination within the configured seam-speed tolerance. It remains a theoretical benchmark assembled from different laps, not a full vehicle simulation.
