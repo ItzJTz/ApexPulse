@@ -19,6 +19,14 @@ def _key(value):
     return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
 
 
+def _is_number(value):
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _resolve_track(path, metadata, tracks_dir=None):
     tracks_path = (
         Path(tracks_dir)
@@ -306,12 +314,38 @@ def _load_telemetry_text(text, source_name, tracks_dir):
         for row in rows[:header_index]
         if len(row) >= 2
     }
+    channel_names = rows[header_index]
+    first_data_row = rows[header_index + 1] if header_index + 1 < len(rows) else []
+    normalized_headers = {_key(name): index for index, name in enumerate(channel_names)}
+    required_keys = ("lapnumber", "lapdistance", "groundspeed")
+    required_indexes = [
+        normalized_headers.get(key)
+        for key in required_keys
+    ]
+    unit_row = bool(first_data_row) and any(
+        index is not None
+        and (
+            index >= len(first_data_row)
+            or not _is_number(first_data_row[index])
+        )
+        for index in required_indexes
+    )
+    channel_units = (
+        {
+            channel.strip(): unit.strip()
+            for channel, unit in zip(channel_names, first_data_row)
+            if channel and unit
+        }
+        if unit_row
+        else {}
+    )
     frame = pd.read_csv(
         io.StringIO(text),
         skiprows=header_index,
         low_memory=False,
     )
     prepared = prepare_telemetry_frame(frame, source_name, metadata, tracks_dir)
+    prepared.attrs["quality"]["channel_units"] = channel_units
     prepared.attrs["quality"]["source_file"] = source_name
     return prepared
 
@@ -448,6 +482,7 @@ def process_session(
         "channels": {
             "required_mapping": quality.get("required_channel_mapping", {}),
             "available": quality.get("source_channels", list(frame.columns)),
+            "units": quality.get("channel_units", {}),
             "optional_missing_percent": quality.get("optional_channel_missing_percent", {}),
         },
         "laps": {

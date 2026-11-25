@@ -12,6 +12,10 @@ from src.core.sector_analysis import _sector_time
 from src.core.driver_inputs import analyze_driver_inputs
 from src.core.math_channels import tire_metrics
 from src.core.spatial import interpolate_spatial
+from src.core.vehicle_dynamics import (
+    predictive_tire_degradation,
+    vehicle_dynamics_analysis,
+)
 from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     lap_time_seconds,
@@ -509,6 +513,12 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
             lap_a,
             track_config=config,
         )
+    vehicle_dynamics_by_lap = {
+        str(float(lap_number)): vehicle_dynamics_analysis(
+            frame[frame["Lap Number"] == lap_number]
+        )
+        for lap_number in valid_lap_numbers(frame)
+    }
     tire = tire_metrics(frame)
     thermal = tire["thermal_gradient"]
     return {
@@ -530,6 +540,7 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
         "corner_delta_breakdown": corner_deltas,
         "driver_input_analysis": driver_inputs,
         "driver_input_analysis_by_lap": driver_inputs_by_lap,
+        "vehicle_dynamics_by_lap": vehicle_dynamics_by_lap,
         "optimal_lap": optimal_lap_analysis(frame),
         "tire_analysis": {
             "friction_circle_area_g2_by_lap": {
@@ -549,6 +560,7 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
                 else 0
             ),
             "unavailable": tire["unavailable"],
+            "degradation_forecast": predictive_tire_degradation(frame),
         },
         "data_quality": quality_report,
     }

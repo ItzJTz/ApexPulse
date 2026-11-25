@@ -9,6 +9,7 @@ from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     lap_time_seconds,
     load_telemetry,
+    load_telemetry_text,
     prepare_telemetry_frame,
     process_session,
     valid_lap_numbers,
@@ -16,6 +17,25 @@ from src.pipeline.telemetry_io import (
 
 
 class TelemetryIoTests(unittest.TestCase):
+    def test_preserves_unit_row_for_vehicle_dynamics_and_qc_report(self):
+        telemetry = (
+            '"Venue","Test Circuit GP Event"\n'
+            "Time,Distance,Ground Speed,Lap Number,Lap Distance,"
+            "Wheel Rot Speed FL,Tire Loaded Radius FL\n"
+            "s,m,km/h,,m,rad/s,m\n"
+            "0,0,36,1,0,20,0.5\n"
+            "1,10,36,1,10,20,0.5\n"
+        )
+
+        frame = load_telemetry_text(telemetry, "session.csv")
+        _, report = process_session(frame, rolling_median_window=1)
+
+        self.assertEqual(frame.attrs["quality"]["channel_units"]["Wheel Rot Speed FL"], "rad/s")
+        self.assertEqual(
+            report["channels"]["units"]["Tire Loaded Radius FL"],
+            "m",
+        )
+
     def test_loads_metadata_csv_and_resolves_track(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -49,6 +69,7 @@ class TelemetryIoTests(unittest.TestCase):
 
         self.assertEqual(frame["Track"].unique().tolist(), ["TestCircuit"])
         self.assertEqual(frame["Normalized_Dist"].tolist(), [0, 50, 100, 0, 50, 100])
+        self.assertEqual(frame.attrs["quality"]["channel_units"], {})
         self.assertEqual(fastest_lap_numbers(frame), [2, 1])
 
     def test_normalizes_channels_sorts_and_deduplicates(self):

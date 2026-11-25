@@ -19,6 +19,13 @@ from src.core.analysis import (
 )
 from src.core.driver_inputs import analyze_driver_inputs, auto_detect_apexes
 from src.core.math_channels import tire_metrics
+from src.core.vehicle_dynamics import (
+    aero_pitch_trace,
+    brake_input_analysis,
+    corner_radius_trace,
+    predictive_tire_degradation,
+    wheel_slip_ratio_trace,
+)
 from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     lap_time_seconds,
@@ -481,6 +488,7 @@ def main():
         (
             "Overview",
             "Driver inputs",
+            "Vehicle dynamics",
             "G-G",
             "Track map",
             "Sectors",
@@ -710,6 +718,201 @@ def main():
                 )
 
     with tabs[2]:
+        dynamics_lap_number = (
+            st.selectbox(
+                "Vehicle-dynamics lap",
+                lap_options,
+                index=lap_options.index(lap_a) if lap_a in lap_options else 0,
+                format_func=lambda value: f"Lap {value:g}",
+            )
+            if lap_options
+            else None
+        )
+        if dynamics_lap_number is None:
+            st.info("No complete laps are available for vehicle-dynamics analysis.")
+        else:
+            dynamics_lap = clean_frame[
+                clean_frame["Lap Number"] == dynamics_lap_number
+            ].copy()
+            radius = corner_radius_trace(dynamics_lap)
+            valid_radius = radius.dropna(subset=["radius_m"])
+            if valid_radius.empty:
+                st.info(
+                    "Corner radius requires usable ground-speed and lateral-G channels."
+                )
+            else:
+                st.plotly_chart(
+                    px.line(
+                        valid_radius,
+                        x="distance_m",
+                        y="radius_m",
+                        labels={
+                            "distance_m": "Lap distance (m)",
+                            "radius_m": "Estimated radius (m)",
+                        },
+                        title="Kinematic corner radius · v² / |lateral acceleration|",
+                    ),
+                    width="stretch",
+                )
+                st.caption(
+                    "Radius is a sample-level kinematic estimate; lower values mean "
+                    "tighter curvature. Tire slip, banking, transient motion, and "
+                    "sensor calibration affect this estimate."
+                )
+
+            slip = wheel_slip_ratio_trace(dynamics_lap)
+            slip_columns = [
+                column for column in slip.columns if column.startswith("slip_ratio_")
+            ]
+            if slip_columns:
+                st.plotly_chart(
+                    px.line(
+                        slip,
+                        x="distance_m",
+                        y=slip_columns,
+                        labels={
+                            "distance_m": "Lap distance (m)",
+                            "value": "Slip ratio (%)",
+                            "variable": "Wheel",
+                        },
+                        title="Longitudinal wheel slip vs ground speed",
+                    ),
+                    width="stretch",
+                )
+                st.caption(
+                    "Wheel surface speed is compared with Ground Speed; positive "
+                    "values indicate wheelspin and negative values indicate wheel "
+                    "speed below vehicle speed. Values below 5 km/h are omitted."
+                )
+            else:
+                st.info(
+                    "Slip ratio is unavailable: wheel rotational speed and calibrated "
+                    "loaded tire radius are required when the speed channel is angular."
+                )
+            unavailable_slip = {
+                wheel: reason
+                for wheel, reason in slip.attrs.get("unavailable", {}).items()
+                if reason
+            }
+            if unavailable_slip:
+                st.caption(
+                    "Unavailable wheels: "
+                    + "; ".join(
+                        f"{wheel}: {reason}"
+                        for wheel, reason in unavailable_slip.items()
+                    )
+                )
+
+            aero = aero_pitch_trace(dynamics_lap)
+            aero_columns = [
+                column
+                for column in aero.columns
+                if column.endswith("_relative")
+            ]
+            if aero_columns:
+                st.plotly_chart(
+                    px.line(
+                        aero,
+                        x="distance_m",
+                        y=aero_columns,
+                        labels={
+                            "distance_m": "Lap distance (m)",
+                            "value": "Movement from low-speed baseline (sensor units)",
+                            "variable": "Axle",
+                        },
+                        title=(
+                            "Front/rear ride-height or suspension movement "
+                            f"· threshold {aero.attrs['high_speed_threshold_kmh']:.0f} km/h"
+                        ),
+                    ),
+                    width="stretch",
+                )
+                st.caption(
+                    "Relative movement only. Sensor direction, suspension geometry, "
+                    "heave/pitch, and calibration must be known before interpreting "
+                    "this as aerodynamic compression or center-of-pressure movement."
+                )
+                st.write("Sensor channels and units:", aero.attrs["available_axles"])
+            else:
+                st.info(
+                    "Aero-pitch proxy requires front and/or rear ride-height or "
+                    "suspension-travel channels."
+                )
+
+            brake = brake_input_analysis(dynamics_lap)
+            if brake["available"]:
+                brake_chart = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=True,
+                    subplot_titles=(
+                        "Brake pedal application",
+                        "Steering angle through braking",
+                    ),
+                )
+                brake_chart.add_trace(
+                    go.Scatter(
+                        x=dynamics_lap["Normalized_Dist"],
+                        y=pd.to_numeric(
+                            dynamics_lap["Brake Pos"], errors="coerce"
+                        ),
+                        name="Brake (%)",
+                    ),
+                    row=1,
+                    col=1,
+                )
+                if "Steering" in dynamics_lap:
+                    brake_chart.add_trace(
+                        go.Scatter(
+                            x=dynamics_lap["Normalized_Dist"],
+                            y=pd.to_numeric(
+                                dynamics_lap["Steering"], errors="coerce"
+                            ),
+                            name="Steering",
+                        ),
+                        row=2,
+                        col=1,
+                    )
+                brake_chart.update_xaxes(title_text="Lap distance (m)", row=2, col=1)
+                brake_chart.update_yaxes(title_text="Brake (%)", row=1, col=1)
+                brake_chart.update_yaxes(title_text="Steering", row=2, col=1)
+                brake_chart.update_layout(
+                    template="plotly_dark",
+                    height=520,
+                    title="Brake ramp-up and release through turn-in",
+                )
+                st.plotly_chart(brake_chart, width="stretch")
+                brake_metrics = st.columns(4)
+                brake_metrics[0].metric(
+                    "Peak ramp-up",
+                    "Unavailable"
+                    if brake["maximum_ramp_up_pct_s"] is None
+                    else f"{brake['maximum_ramp_up_pct_s']:.0f} %/s",
+                )
+                brake_metrics[1].metric(
+                    "Steepest release",
+                    "Unavailable"
+                    if brake["steepest_release_pct_s"] is None
+                    else f"{brake['steepest_release_pct_s']:.0f} %/s",
+                )
+                brake_metrics[2].metric(
+                    f"Abrupt release zones (>{brake['abrupt_release_minimum_speed_kmh']:g} km/h)",
+                    str(brake["abrupt_release_count"]),
+                )
+                brake_metrics[3].metric(
+                    "Abrupt releases below speed",
+                    str(brake["low_speed_abrupt_release_count"]),
+                )
+                if brake["braking_episodes"]:
+                    st.dataframe(
+                        pd.DataFrame(brake["braking_episodes"]),
+                        hide_index=True,
+                        width="stretch",
+                    )
+            else:
+                st.info("Brake-input analysis requires a usable Brake Pos channel.")
+
+    with tabs[3]:
         selected_lap = clean_frame[clean_frame["Lap Number"] == lap_a]
         gg = _gg_figure(selected_lap) if lap_a is not None else None
         if gg is None:
@@ -734,7 +937,7 @@ def main():
             force_metrics[2].metric("Peak displayed longitudinal G", f"{long.abs().max():.2f} G")
             st.caption("These are measured channel summaries, not a tire-grip limit or validated utilization score.")
 
-    with tabs[3]:
+    with tabs[4]:
         map_lap = clean_frame[clean_frame["Lap Number"] == lap_a] if lap_a is not None else clean_frame.iloc[0:0]
         map_config = load_track_config(clean_frame)
         corner_metadata = map_config.get("corner_metadata", []) if map_config else []
@@ -758,7 +961,7 @@ def main():
                     )
             st.plotly_chart(track_figure, width="stretch")
 
-    with tabs[4]:
+    with tabs[5]:
         config = load_track_config(clean_frame)
         if alignment is None:
             st.info("Select two complete laps to compare sectors.")
@@ -852,7 +1055,7 @@ def main():
                         width="stretch",
                     )
 
-    with tabs[5]:
+    with tabs[6]:
         rows = st.columns(4)
         rows[0].metric("Input rows", f"{quality['rows']['source']:,}")
         rows[1].metric("Invalid required rows", f"{quality['rows']['invalid_required_data']:,}")
@@ -959,7 +1162,7 @@ def main():
             mime="text/csv",
         )
 
-    with tabs[6]:
+    with tabs[7]:
         st.markdown(
             "Compare the fastest complete lap in this session with the fastest complete lap "
             "from a second telemetry file. The files should be from the same circuit and use "
@@ -1071,7 +1274,7 @@ def main():
             except (OSError, TypeError, ValueError, pd.errors.ParserError) as exc:
                 st.error(f"Could not compare these telemetry sessions: {exc}")
 
-    with tabs[7]:
+    with tabs[8]:
         micro_sector_meters = st.slider(
             "Micro-sector length (m)",
             min_value=10,
@@ -1134,8 +1337,66 @@ def main():
         except ValueError as exc:
             st.info(str(exc))
 
-    with tabs[8]:
+    with tabs[9]:
         tire = tire_metrics(clean_frame)
+        degradation = predictive_tire_degradation(clean_frame)
+        st.subheader("Stint degradation forecast")
+        if not degradation["available"]:
+            st.info(degradation["unavailable"])
+        else:
+            degradation_metrics = st.columns(3)
+            degradation_metrics[0].metric(
+                "Lap-time trend",
+                f"{degradation['lap_time_slope_s_per_lap']:+.3f} s/lap",
+            )
+            degradation_metrics[1].metric(
+                "Trend R²",
+                f"{degradation['lap_time_trend_r_squared']:.2f}",
+            )
+            degradation_metrics[2].metric(
+                "Predicted threshold lap",
+                "No positive trend"
+                if degradation["predicted_threshold_lap"] is None
+                else str(degradation["predicted_threshold_lap"]),
+            )
+            trend_frame = pd.DataFrame(
+                [
+                    {
+                        "Lap": float(lap),
+                        "Recorded lap time (s)": seconds,
+                        "Fitted trend (s)": degradation[
+                            "fitted_lap_times_seconds"
+                        ][lap],
+                    }
+                    for lap, seconds in degradation["lap_times_seconds"].items()
+                ]
+            )
+            st.plotly_chart(
+                px.line(
+                    trend_frame,
+                    x="Lap",
+                    y=["Recorded lap time (s)", "Fitted trend (s)"],
+                    markers=True,
+                    title="Lap-time trend over stint",
+                ),
+                width="stretch",
+            )
+            st.caption(
+                f"Forecast target is baseline pace + "
+                f"{degradation['lap_time_drop_threshold_s']:.2f} s; "
+                f"baseline uses the first three complete laps. "
+                f"{degradation['caveat']}"
+            )
+            if degradation["sensor_trend_slopes_per_lap"]:
+                st.write(
+                    "Observed tire sensor trends per lap:",
+                    degradation["sensor_trend_slopes_per_lap"],
+                )
+            else:
+                st.info(
+                    "No tire core-temperature or pressure channels were available "
+                    "for sensor trend analysis; pace-only regression is shown."
+                )
         area_comparison = tire["friction_circle_area_comparison"]
         if area_comparison is None:
             message = tire["unavailable"].get(

@@ -22,8 +22,16 @@ tire_analysis:
   friction_circle_exponent: 1.5
   baseline_lap: null
   compare_lap: null
+  degradation_minimum_laps: 15
+  degradation_lap_time_drop_s: 0.5
 
 vehicle:
   aero_downforce_mult: 0.85
   default_brake_bias: 58.5
   brake_active_threshold: 0.05
+  minimum_cornering_lateral_g: 0.05
+  minimum_slip_speed_kmh: 5.0
+  high_speed_aero_threshold_kmh: 200.0
+  brake_input_threshold_pct: 5.0
+  abrupt_brake_release_pct_s: 600.0
+  abrupt_brake_release_min_speed_kmh: 60.0

@@ -98,6 +98,7 @@ class DashboardTests(unittest.TestCase):
             [
                 "Overview",
                 "Driver inputs",
+                "Vehicle dynamics",
                 "G-G",
                 "Track map",
                 "Sectors",
