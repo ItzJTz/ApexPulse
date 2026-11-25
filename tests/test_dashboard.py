@@ -5,10 +5,45 @@ import numpy as np
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from src.visualization.dashboard import _gg_figure, _track_figure
+from src.visualization.dashboard import (
+    _aero_sensor_summary,
+    _gg_figure,
+    _track_figure,
+)
 
 
 class DashboardTests(unittest.TestCase):
+    def test_aero_sensor_summary_is_compact_and_labels_units(self):
+        summary = _aero_sensor_summary(
+            {
+                "front": {
+                    "source": "Suspension Travel",
+                    "unit": "mm",
+                    "baseline": 46.92345,
+                    "high_speed_relative_median": -10.2499,
+                },
+                "rear": None,
+            }
+        )
+
+        self.assertEqual(
+            summary.columns.tolist(),
+            [
+                "Axle",
+                "Sensor",
+                "Unit",
+                "Low-speed baseline",
+                "High-speed median change",
+            ],
+        )
+        self.assertEqual(summary.to_dict("records"), [{
+            "Axle": "Front",
+            "Sensor": "Suspension Travel",
+            "Unit": "mm",
+            "Low-speed baseline": 46.92345,
+            "High-speed median change": -10.2499,
+        }])
+
     def test_gg_chart_handles_string_and_invalid_acceleration_samples(self):
         lap = pd.DataFrame(
             {

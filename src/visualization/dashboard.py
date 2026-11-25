@@ -352,6 +352,30 @@ def _track_figure(lap, corner_metadata=None):
     return figure, "Approximate reconstruction from lateral acceleration"
 
 
+def _aero_sensor_summary(available_axles):
+    rows = [
+        {
+            "Axle": axle.title(),
+            "Sensor": details["source"],
+            "Unit": details["unit"] or "not provided",
+            "Low-speed baseline": details["baseline"],
+            "High-speed median change": details["high_speed_relative_median"],
+        }
+        for axle, details in available_axles.items()
+        if details is not None
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=(
+            "Axle",
+            "Sensor",
+            "Unit",
+            "Low-speed baseline",
+            "High-speed median change",
+        ),
+    )
+
+
 def main():
     st.set_page_config(page_title="ApexPulse Telemetry", page_icon="🏁", layout="wide")
     st.title("ApexPulse")
@@ -810,6 +834,15 @@ def main():
                 if column.endswith("_relative")
             ]
             if aero_columns:
+                available_axles = aero.attrs["available_axles"]
+                units = {
+                    details["unit"]
+                    for details in available_axles.values()
+                    if details is not None and details["unit"]
+                }
+                movement_unit = (
+                    next(iter(units)) if len(units) == 1 else "sensor units"
+                )
                 st.plotly_chart(
                     px.line(
                         aero,
@@ -817,7 +850,10 @@ def main():
                         y=aero_columns,
                         labels={
                             "distance_m": "Lap distance (m)",
-                            "value": "Movement from low-speed baseline (sensor units)",
+                            "value": (
+                                "Movement from low-speed baseline "
+                                f"({movement_unit})"
+                            ),
                             "variable": "Axle",
                         },
                         title=(
@@ -832,7 +868,19 @@ def main():
                     "heave/pitch, and calibration must be known before interpreting "
                     "this as aerodynamic compression or center-of-pressure movement."
                 )
-                st.write("Sensor channels and units:", aero.attrs["available_axles"])
+                st.dataframe(
+                    _aero_sensor_summary(available_axles),
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "Low-speed baseline": st.column_config.NumberColumn(
+                            format="%.1f"
+                        ),
+                        "High-speed median change": st.column_config.NumberColumn(
+                            format="%+.1f"
+                        ),
+                    },
+                )
             else:
                 st.info(
                     "Aero-pitch proxy requires front and/or rear ride-height or "
