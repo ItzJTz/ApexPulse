@@ -9,3 +9,7 @@ venv/
 /reports/
 .pytest_cache/
 .ruff_cache/
+/data/2_24_638_PB.csv
+/data/raw_telemetry.ld
+/data/clean_*.csv
+/data/data_with_math_channels.csv

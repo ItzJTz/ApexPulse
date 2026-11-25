@@ -136,6 +136,44 @@ class VehicleDynamicsTests(unittest.TestCase):
         )
         self.assertEqual(controlled_result["abrupt_release_count"], 0)
 
+    def test_brake_release_rate_respects_native_motec_channel_rate(self):
+        time = np.arange(101, dtype=float) / 100
+        brake = np.interp(time, [0.0, 0.4, 0.5, 1.0], [100, 100, 0, 0])
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": np.arange(len(time), dtype=float),
+                "Time": time,
+                "Ground Speed": np.full(len(time), 100),
+                "Brake Pos": brake,
+                "Steering": np.zeros(len(time)),
+            }
+        )
+        lap.attrs["quality"] = {
+            "channel_sample_rates_hz": {"Brake Pos": 10.0}
+        }
+
+        result = brake_input_analysis(lap)
+
+        self.assertAlmostEqual(result["steepest_release_pct_s"], -250)
+        self.assertEqual(result["abrupt_release_count"], 0)
+
+    def test_brake_input_analysis_uses_time_order_when_distance_runs_backward(self):
+        count = 30
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": np.arange(count, dtype=float)[::-1],
+                "Time": np.arange(count, dtype=float) / 50,
+                "Ground Speed": np.full(count, 100),
+                "Brake Pos": np.r_[np.full(8, 100.0), np.zeros(count - 8)],
+                "Steering": np.zeros(count),
+            }
+        )
+
+        result = brake_input_analysis(lap)
+
+        self.assertAlmostEqual(result["steepest_release_pct_s"], -1250)
+        self.assertEqual(result["abrupt_release_count"], 1)
+
     def test_degradation_forecast_requires_fifteen_laps_and_fits_trend(self):
         rows = []
         for lap_number in range(1, 16):

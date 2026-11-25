@@ -114,6 +114,40 @@ class DriverInputTests(unittest.TestCase):
             all(event["slope_percent_s"] <= -600 for event in abrupt_events)
         )
 
+        low_rate_frame = frame.copy()
+        low_rate_frame.attrs["quality"] = {
+            **frame.attrs["quality"],
+            "channel_sample_rates_hz": {"Brake Pos": 10.0},
+        }
+        low_rate_result = analyze_driver_inputs(low_rate_frame, 1)
+
+        self.assertEqual(
+            low_rate_result["metrics"]["abrupt_brake_release_m"],
+            [],
+        )
+
+    def test_driver_brake_events_follow_time_when_distance_runs_backward(self):
+        count = 30
+        brake = np.r_[np.full(8, 100.0), np.zeros(count - 8)]
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * count,
+                    "Lap Distance": np.arange(count, dtype=float)[::-1],
+                    "Ground Speed": np.full(count, 100.0),
+                    "Time": np.arange(count, dtype=float) / 50,
+                    "Throttle Pos": np.zeros(count),
+                    "Brake Pos": brake,
+                    "Steering": np.zeros(count),
+                    "Gear": np.full(count, 4.0),
+                }
+            )
+        )
+
+        result = analyze_driver_inputs(frame, 1)
+
+        self.assertEqual(len(result["metrics"]["abrupt_brake_release_m"]), 1)
+
     def test_cluster_distances_uses_consecutive_gap_threshold(self):
         clusters = cluster_distances([81, 40, 0, 200], max_gap_m=40)
 
@@ -307,10 +341,10 @@ class DriverInputTests(unittest.TestCase):
             ]
         }
 
-        result = corner_delta_breakdown(frame, 1, 2, track_config, 144.638)
+        result = corner_delta_breakdown(frame, 1, 2, track_config, 123.456)
 
         self.assertFalse(result["reference_matches_benchmark"])
-        self.assertEqual(result["reference_benchmark_seconds"], 144.638)
+        self.assertEqual(result["reference_benchmark_seconds"], 123.456)
         corner = result["ranked_by_time_loss"][0]
         self.assertAlmostEqual(corner["time_loss_seconds"], -2.5)
         self.assertAlmostEqual(corner["cumulative_time_loss_seconds"], -2.5)

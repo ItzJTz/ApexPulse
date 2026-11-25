@@ -2,12 +2,21 @@ import unittest
 
 import pandas as pd
 
-from src.core.analysis import align_driver_sessions, align_laps, optimal_lap_analysis
+from src.core.analysis import (
+    align_driver_sessions,
+    align_laps,
+    optimal_lap_analysis,
+    reference_lap_target_seconds,
+)
 from src.core.spatial import interpolate_spatial
 from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class LapAlignmentTests(unittest.TestCase):
+    def test_reference_benchmark_is_selected_by_track(self):
+        self.assertEqual(reference_lap_target_seconds("Sepang"), 144.638)
+        self.assertEqual(reference_lap_target_seconds("Unknown"), 144.638)
+
     def test_delta_is_positive_when_compared_lap_is_faster_and_includes_endpoint(self):
         frame = prepare_telemetry_frame(
             pd.DataFrame(

@@ -13,6 +13,7 @@ from src.core.analysis import (
     align_driver_sessions,
     align_laps,
     corner_delta_breakdown,
+    reference_lap_target_seconds,
     load_track_config,
     optimal_lap_analysis,
     sector_results,
@@ -397,9 +398,22 @@ def main():
         + list(data_directory.glob("*.ld"))
     )
     preferred = next(
-        (index for index, path in enumerate(local_files) if path.name.startswith("raw_")),
-        0,
+        (
+            index
+            for index, path in enumerate(local_files)
+            if path.name == "2_24_638_PB.csv"
+        ),
+        None,
     )
+    if preferred is None:
+        preferred = next(
+            (
+                index
+                for index, path in enumerate(local_files)
+                if path.name.startswith("raw_")
+            ),
+            0,
+        )
     with st.sidebar:
         st.header("Session")
         upload = st.file_uploader(
@@ -454,7 +468,13 @@ def main():
         clean_frame,
         count=max(2, clean_frame["Lap Number"].nunique()),
     )
-    reference_target_seconds = float(config_value("analysis", "reference_lap_seconds"))
+    track_names = (
+        clean_frame["Track"].dropna().astype(str).unique()
+        if "Track" in clean_frame
+        else []
+    )
+    track_name = track_names[0] if len(track_names) == 1 else None
+    reference_target_seconds = reference_lap_target_seconds(track_name)
     reference_target_label = (
         f"{int(reference_target_seconds // 60)}:"
         f"{reference_target_seconds % 60:06.3f}"

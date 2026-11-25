@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 from src.core.signal_rates import (
-    PEDAL_SLOPE_SAMPLES,
+    native_sample_rate_hz,
     smoothed_derivative,
 )
 
@@ -220,16 +220,21 @@ def auto_detect_apexes(
 def _lap_samples(frame, lap_number, sample_rate_hz):
     lap = frame[frame["Lap Number"] == lap_number].copy()
     lap["_distance"] = pd.to_numeric(lap["Normalized_Dist"], errors="coerce")
+    if "Time" in lap:
+        times = pd.to_numeric(lap["Time"], errors="coerce").to_numpy(dtype=float)
+        lap["_time"] = times
+        order_columns = ["_time", "_distance"]
+    else:
+        times = np.arange(len(lap), dtype=float) / sample_rate_hz
+        order_columns = ["_distance"]
     lap = (
         lap.replace([np.inf, -np.inf], np.nan)
         .dropna(subset=["_distance"])
-        .sort_values("_distance", kind="stable")
+        .sort_values(order_columns, kind="stable")
         .reset_index(drop=True)
     )
     if "Time" in lap:
         times = pd.to_numeric(lap["Time"], errors="coerce").to_numpy(dtype=float)
-    else:
-        times = np.arange(len(lap), dtype=float) / sample_rate_hz
     if len(times) > 1:
         valid_deltas = np.diff(times)
         valid_deltas = valid_deltas[np.isfinite(valid_deltas) & (valid_deltas > 0)]
@@ -398,12 +403,16 @@ def analyze_driver_inputs(
 
     if count > 1:
         delta_time = channels["Delta Time"]
-        brake_slope = smoothed_derivative(brake, delta_time)
+        brake_slope = smoothed_derivative(
+            brake,
+            delta_time,
+            native_sample_rate_hz(frame, "Brake Pos"),
+        )
         throttle_slope = np.diff(throttle) / delta_time
         for slope_index in np.flatnonzero(
             (brake_slope < -600) & np.isfinite(brake_slope)
         ):
-            index = max(0, int(slope_index) - PEDAL_SLOPE_SAMPLES // 2)
+            index = int(slope_index)
             if not np.isfinite(speed[index]) or speed[index] <= 60:
                 continue
             events_by_detector["abrupt_brake_release_m"].append(

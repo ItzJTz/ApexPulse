@@ -9,7 +9,7 @@ import pandas as pd
 from src.config import config_value
 from src.core.driver_inputs import auto_detect_apexes
 from src.core.signal_rates import (
-    PEDAL_SLOPE_SAMPLES,
+    native_sample_rate_hz,
     smoothed_derivative,
 )
 from src.pipeline.telemetry_io import lap_time_seconds, valid_lap_numbers
@@ -242,6 +242,10 @@ def aero_pitch_trace(lap):
 
 def brake_input_analysis(lap, sample_rate_hz=50.0):
     """Summarize brake application ramps and pressure decay through turn-in."""
+    if "Time" in lap:
+        lap = lap.assign(
+            _analysis_time=pd.to_numeric(lap["Time"], errors="coerce")
+        ).sort_values("_analysis_time", kind="stable")
     brake = _numeric(lap, "Brake Pos")
     steering = _numeric(lap, "Steering")
     speed = _numeric(lap, "Ground Speed")
@@ -274,7 +278,11 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
         else 1.0 / sample_rate_hz
     )
     delta_time[~valid_dt] = fallback_dt
-    brake_slope = smoothed_derivative(brake, delta_time)
+    brake_slope = smoothed_derivative(
+        brake,
+        delta_time,
+        native_sample_rate_hz(lap, "Brake Pos"),
+    )
     steering_magnitude = np.abs(steering)
     braking = np.isfinite(brake) & (brake >= threshold)
     padded = np.concatenate(([False], braking, [False]))
@@ -286,10 +294,7 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
             continue
         local_brake = brake[start:stop]
         center_indices = np.arange(start, stop)
-        slope_indices = center_indices + PEDAL_SLOPE_SAMPLES // 2
-        valid_slope_indices = slope_indices < len(brake_slope)
-        center_indices = center_indices[valid_slope_indices]
-        slope_indices = slope_indices[valid_slope_indices]
+        slope_indices = center_indices
         local_slopes = brake_slope[slope_indices]
         local_slopes = local_slopes[np.isfinite(local_slopes)]
         release_mask = (

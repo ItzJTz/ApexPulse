@@ -7,7 +7,7 @@ from src.pipeline.telemetry_io import fastest_lap_numbers, load_telemetry
 from src.visualization.style import apply_style
 
 
-def compare_laps(csv_path="data/raw_telemetrySilverstone.csv", grid_step=None):
+def compare_laps(csv_path="data/2_24_638_PB.csv", grid_step=None):
     grid_step = (
         config_value("analysis", "spatial_grid_m")
         if grid_step is None

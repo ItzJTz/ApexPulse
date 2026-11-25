@@ -4,7 +4,7 @@ from src.pipeline.telemetry_io import load_telemetry, process_session
 
 
 def calculate_optimal_lap(
-    csv_path="data/raw_telemetrySilverstone.csv",
+    csv_path="data/2_24_638_PB.csv",
     micro_sector_meters=None,
 ):
     micro_sector_meters = (

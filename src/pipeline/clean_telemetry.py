@@ -16,8 +16,8 @@ def clean_telemetry(
 ):
     """Normalize telemetry, filter incomplete laps, and export CSV plus QC JSON."""
     if output_csv_path is None:
-        base_name = os.path.basename(raw_csv_path)
-        output_csv_path = os.path.join("data", f"clean_{base_name}")
+        base_name = Path(raw_csv_path).stem
+        output_csv_path = os.path.join("data", f"clean_{base_name}.csv")
 
     output_csv_path = Path(output_csv_path)
     report_json_path = (
@@ -48,8 +48,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "input",
         nargs="?",
-        default="data/raw_telemetrySilverstone.csv",
-        help="Raw telemetry CSV (default: data/raw_telemetrySilverstone.csv).",
+        default="data/2_24_638_PB.csv",
+        help="MoTeC LD or telemetry CSV (default: data/2_24_638_PB.csv).",
     )
     parser.add_argument(
         "--output",

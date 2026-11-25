@@ -18,14 +18,14 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
 * **Kinematic 2D Track Map Reconstruction:** Provides track visualization from logged GPS coordinates or an explicitly approximate path reconstructed from lateral acceleration when GPS is unavailable.
 * **Vehicle Dynamics ($G\text{-}G$ Plots):** Visualizes lateral vs. longitudinal acceleration as sample density in the dashboard. The standalone friction-circle script also draws a superellipse envelope based on observed lap data; this is not a validated tire-grip limit.
 * **Config-Driven Corner Sector Analysis:** Reads JSON distance gates to evaluate corner minimum speed ($\text{V-Min}$) and sector time deltas.
-* **Automated Driver-Input Detectors:** Checks brake double-application and release, trail-brake overlap, loaded throttle snaps, throttle hesitations, dead coasting, and loaded downshifts. Rates are derived from telemetry timestamps when present, with a 50 Hz fallback.
+* **Automated Driver-Input Detectors:** Checks brake double-application and release, trail-brake overlap, loaded throttle snaps, throttle hesitations, dead coasting, and loaded downshifts. Rates use recorded channel sample rates when available, otherwise telemetry timestamps, with a 50 Hz fallback.
 * **Spatial Mistake Clustering:** Merges repeat trigger samples within 40 m before detector counts and event tables are produced. Event corner labels use local ground-speed minima from each lap, so numbering adapts to track variants; these candidates are estimates, not surveyed geometry.
-* **Corner Delta Ranking:** Compares selected-lap corner times against an actual telemetry reference lap, reports cumulative time loss in track order, and ranks the largest losses. The configured 2:24.638 benchmark is a lap-time target only; corner deltas require the reference lap's telemetry trace.
+* **Corner Delta Ranking:** Compares selected-lap corner times against an actual telemetry reference lap, reports cumulative time loss in track order, and ranks the largest losses. The Sepang 2:24.638 benchmark is a lap-time target only; corner deltas require the reference lap's telemetry trace.
 * **Automated Lap Validation:** Excludes laps below a configurable minimum distance-coverage threshold and rejects overlength laps against known track geometry before analysis.
 * **Physics-Guarded Optimal Lap:** Uses dynamic programming to select the fastest sector combination that meets a configured speed-continuity tolerance at each splice. This remains a modeled benchmark, not a validated full vehicle simulation.
 * **Conditional Tire Analytics:** Computes observed G-G envelope area, inner/outer temperature gradient, and a steering-speed-lateral-G integral only when required channels are present; missing channels are reported rather than fabricated.
 * **Vehicle-Dynamics Estimates:** Calculates corner radius as $v^2 / |a_{lat}|$ (converting km/h to m/s and masking near-zero lateral G), per-wheel longitudinal slip against logged Ground Speed, and front/rear ride-height or suspension movement relative to a low-speed baseline. Slip from angular wheel-speed sensors requires a measured loaded tire radius and known units; unavailable inputs remain explicitly unavailable. Suspension motion is a proxy, not a direct downforce or center-of-pressure measurement.
-* **Brake-Input Classification:** Reports brake ramp-up, release slopes, and brake-pressure decay as steering increases through each braking episode. Brake rates use a centered 3-sample smoothing window and a 4-interval slope (80 ms at 50 Hz) to reduce trigger quantization; abrupt release uses the configured 600 %/s default above 60 km/h, while lower-speed abrupt releases are identified separately.
+* **Brake-Input Classification:** Reports brake ramp-up, release slopes, and brake-pressure decay as steering increases through each braking episode. Brake rates use centered 3-sample smoothing and a 4-interval slope at the channel's native rate: 80 ms for the 50 Hz CSV and about 133 ms for the 30 Hz BMW MoTeC brake channel. Abrupt release uses the configured 600 %/s default above 60 km/h, while lower-speed abrupt releases are identified separately.
 * **Stint Pace Forecast:** Fits an interpretable least-squares lap-time trend for stints with at least 15 complete laps, reports fit quality and observed tire temperature/pressure trends where available, and projects when pace crosses the configured threshold. It is a pace forecast, not proof of tire-caused degradation.
 
 ---
@@ -41,10 +41,9 @@ By decoupling analytical logic from circuit geometries through dynamic JSON conf
     │   ├── telemetry_traces.png
     │   ├── time_delta.png
     │   └── track_map.png
-    ├── data/                    # Raw telemetry inputs and cleaned datasets (.csv)
-    │   ├── clean_data.csv
-    │   ├── data_with_math_channels.csv
-    │   └── raw_telemetrySilverstone.csv
+    ├── data/                    # Local input files (kept out of Git)
+    │   ├── 2_24_638_PB.csv       # Four-lap Sepang PB session
+    │   └── raw_telemetry.ld      # BMW M235i at Sepang; one complete lap
     ├── config.yaml              # Shared coverage, grid, filter, and physics defaults
     ├── src/
     │   ├── cli.py               # Configurable clean and dashboard commands
@@ -76,9 +75,9 @@ The source tree is divided into `src/pipeline/`, `src/core/`, and `src/visualiza
 
 ## File Naming Convention
 
-To enable zero-touch track detection, ensure your input CSV file includes the circuit name in its filename (e.g., `raw_telemetrySilverstone.csv`, `spa_session.csv`, or `monza_hotlap.csv`).
+Track identity is read from the filename or telemetry metadata. The default `2_24_638_PB.csv` is a four-complete-lap Sepang session and supports lap/stint analysis. `raw_telemetry.ld` is a separate BMW M235i MoTeC sample at Sepang, retained to validate LD importing; it has one complete lap.
 
-The pipeline parses the filename, tags the data, and loads the matching geometry configuration from `/tracks` automatically.
+Keep local telemetry in `data/`; the two reference files and generated cleaned CSVs are ignored by Git so raw telemetry is not uploaded accidentally.
 
 ---
 
@@ -99,7 +98,7 @@ In VS Code, select `.venv\Scripts\python.exe` with **Python: Select Interpreter*
 
 Run from the repository root. The input may be a standard MoTeC i2 `.ld` file, a raw MoTeC-style CSV, or a previously cleaned CSV:
 
-    .\.venv\Scripts\python.exe -m src.cli clean data\raw_telemetrySilverstone.csv --output-dir reports
+    .\.venv\Scripts\python.exe -m src.cli clean data\2_24_638_PB.csv --output-dir reports
 
 The dashboard accepts `.ld` and `.csv` uploads. It converts `.ld` channel data to the dashboard's aligned telemetry table; in the **Data quality** tab, download the converted/cleaned data as CSV. `.ldx` files are not supported—export them to CSV in MoTeC i2 first. For channels recorded at different rates, values are resampled to a shared timeline at the highest supported channel rate; discrete lap and gear channels use nearest-sample alignment. The importer converts recognized speed units (mph or m/s) to km/h and distance units to meters, and reports assumptions for unrecognized units.
 
@@ -117,7 +116,7 @@ Then follow these steps:
 
 1. In the left sidebar, either upload a MoTeC `.ld` file or telemetry CSV, or choose a `.ld`/`.csv` file already in `data/`. If a file is uploaded, it takes precedence over the local-file selector.
 2. Set **Minimum lap coverage**. The default is 90%; increase it to exclude more partial laps or lower it only when appropriate for your session.
-3. Select a **Reference lap** and a **Compared lap**. The dashboard initially selects the two fastest valid laps; you can change either selection.
+3. Select a **Reference lap** and a **Compared lap**. The default local file is `2_24_638_PB.csv`, which contains four complete laps. The BMW LD sample contains one complete lap and is primarily included for MoTeC importer validation. Lap benchmarks are selected by track.
 4. Open the tabs to review the session:
 
    * **Overview:** lap speed traces and cumulative time delta. Positive delta means the compared lap is ahead. An optional DTW panel aligns speed-profile shape for diagnosis only; it does not modify the time delta.
@@ -125,7 +124,7 @@ Then follow these steps:
    * **Vehicle dynamics:** selected-lap corner-radius estimates, wheel-slip traces when wheel speed and loaded radius are available, suspension/ride-height movement relative to a low-speed baseline, and brake ramp/release analysis. Slip is referenced to logged Ground Speed (not GPS speed); sensor and vehicle calibration are required for physical interpretation.
    * **G-G:** measured lateral/longitudinal acceleration sample density. Brighter cells mean more samples in that acceleration range; empty ranges are blank. Lateral G is signed left/right. Longitudinal G is sign-inverted, so positive means acceleration and negative means braking. It does not claim to estimate a validated tire-grip envelope.
    * **Track map:** logged GPS positions or vehicle coordinates when present; otherwise an explicitly labeled approximate path from lateral acceleration. Numbered corner markers use approximate apex distances from the track configuration. Assetto Corsa channels such as `Car Coord X`/`Car Coord Y` and `CG Accel Lateral`/`CG Accel Longitudinal` are recognized.
-   * **Sectors:** minimum speeds and distance-integrated sector and corner times when the track is identified and a matching configuration is available. Corner deltas compare the selected laps and rank losses against the selected reference trace. The 2:24.638 configured target cannot provide corner-by-corner data unless a matching reference lap is present. Corner distances from published layouts are approximate and should be checked against telemetry.
+   * **Sectors:** minimum speeds and distance-integrated sector and corner times when the track is identified and a matching configuration is available. Corner deltas compare the selected laps and rank losses against the selected reference trace. The 2:24.638 Sepang target cannot provide corner-by-corner data unless a matching reference lap is present. Corner distances from published layouts are approximate and should be checked against telemetry.
    * **Data quality:** included/excluded laps, dropped/duplicate rows, optional-channel completeness, and downloads for the cleaned CSV and JSON report.
    * **Driver comparison:** upload a second session to compare its fastest complete lap with the fastest complete lap from the main session. Both files should be from the same circuit and use compatible distance units. If track metadata is missing, confirm this manually in the tab.
    * **Optimal lap:** uses dynamic programming to choose the fastest micro-sector combination within the configured seam-speed tolerance. It remains a theoretical benchmark assembled from different laps, not a full vehicle simulation.
@@ -135,11 +134,11 @@ Then follow these steps:
 
 The dashboard reports sector times as estimates. Logged vehicle coordinates and reconstructed paths are not surveyed circuit geometry, and GPS coordinate values are shown as supplied by the data source. Track-specific sectors require the filename or source metadata to identify a track with a matching JSON configuration in `tracks/`.
 
-To run the separate command-line sector report, provide a raw or cleaned CSV whose filename or Venue metadata identifies its track:
+To run the separate command-line sector report, provide an LD or CSV whose filename or Venue metadata identifies its track:
 
-    python -m src.core.sector_analysis data/raw_telemetrySilverstone.csv
+    python -m src.core.sector_analysis data/2_24_638_PB.csv
 
-For the supplied Silverstone sample, this compares the last two complete laps. A generic filename such as `clean_data.csv` without Venue metadata cannot identify the circuit; use a track-named file or the original telemetry file instead.
+The default PB CSV contains four complete laps, so this compares its last two valid laps.
 
 The dashboard and command-line tools share lap alignment and telemetry processing. Synthetic-data unit tests cover fastest-lap selection, spatial alignment, repeated-distance handling, and optimal-lap calculations; real cross-driver sessions are still needed to validate results against actual driver data.
 

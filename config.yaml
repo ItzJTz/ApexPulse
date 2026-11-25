@@ -7,6 +7,8 @@ analysis:
   micro_sector_m: 50.0
   max_boundary_speed_delta_mps: 2.0
   reference_lap_seconds: 144.638
+  reference_lap_seconds_by_track:
+    Sepang: 144.638
 
 signal_filter:
   enabled: true

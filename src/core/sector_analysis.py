@@ -32,7 +32,7 @@ def _sector_time(lap, start_distance, end_distance):
     return float(np.sum(intervals * (0.5 / sector_speed[:-1] + 0.5 / sector_speed[1:])))
 
 
-def analyze_sectors(clean_file_path="data/raw_telemetrySilverstone.csv", tracks_dir=None):
+def analyze_sectors(clean_file_path="data/2_24_638_PB.csv", tracks_dir=None):
     df = load_telemetry(clean_file_path, tracks_dir)
     if "Track" not in df.columns or df["Track"].nunique() != 1:
         raise ValueError(
@@ -129,10 +129,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "input",
         nargs="?",
-        default="data/raw_telemetrySilverstone.csv",
+        default="data/2_24_638_PB.csv",
         help=(
-            "Raw or cleaned telemetry CSV. Its filename or Venue metadata must identify "
-            "a configured track (default: data/raw_telemetrySilverstone.csv)."
+            "MoTeC LD or telemetry CSV. Its filename or Venue metadata must identify "
+            "a configured track (default: data/2_24_638_PB.csv)."
         ),
     )
     parser.add_argument(

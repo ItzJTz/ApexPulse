@@ -403,8 +403,14 @@ def corner_delta_breakdown(
         raise ValueError("Choose different reference and compared laps.")
     if not track_config:
         return None
+    track_names = (
+        frame["Track"].dropna().astype(str).unique()
+        if "Track" in frame
+        else []
+    )
+    track_name = track_names[0] if len(track_names) == 1 else None
     benchmark_seconds = (
-        float(config_value("analysis", "reference_lap_seconds"))
+        reference_lap_target_seconds(track_name)
         if reference_lap_seconds is None
         else float(reference_lap_seconds)
     )
@@ -473,6 +479,17 @@ def corner_delta_breakdown(
             reverse=True,
         ),
     }
+
+
+def reference_lap_target_seconds(track_name=None):
+    """Return a configured benchmark for a track, falling back to the default."""
+    track_targets = config_value("analysis", "reference_lap_seconds_by_track") or {}
+    if track_name is not None:
+        normalized_track = str(track_name).strip().casefold()
+        for configured_track, seconds in track_targets.items():
+            if str(configured_track).strip().casefold() == normalized_track:
+                return float(seconds)
+    return float(config_value("analysis", "reference_lap_seconds"))
 
 
 def load_track_config(frame, tracks_dir=None):
