@@ -256,7 +256,7 @@ def _track_figure(lap, corner_metadata=None):
                 hover_data=["Normalized_Dist", "Ground Speed"],
                 title="Logged GPS position (coordinates not independently validated)",
             )
-            figure.update_traces(mode="lines+markers", marker={"size": 4})
+            figure.update_traces(mode="markers", marker={"size": 4})
             figure.update_layout(
                 template="plotly_dark",
                 xaxis_title="Longitude",
@@ -296,7 +296,7 @@ def _track_figure(lap, corner_metadata=None):
                 hover_data=["Normalized_Dist", "Ground Speed"],
                 title="Logged vehicle coordinates (not surveyed geometry)",
             )
-            figure.update_traces(mode="lines+markers", marker={"size": 4})
+            figure.update_traces(mode="markers", marker={"size": 4})
             figure.update_layout(
                 template="plotly_dark",
                 xaxis_title="Car coordinate X (m)",

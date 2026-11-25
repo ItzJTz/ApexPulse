@@ -56,7 +56,24 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNotNone(figure)
         self.assertEqual(method, "Logged vehicle coordinates")
         self.assertEqual(list(figure.data[0].x), [0, 10, 12, 0])
+        self.assertEqual(figure.data[0].mode, "markers")
         self.assertIn("not surveyed geometry", figure.layout.title.text)
+
+    def test_track_map_keeps_gps_track_markers_without_connector_lines(self):
+        lap = pd.DataFrame(
+            {
+                "Normalized_Dist": [0, 10, 20, 30],
+                "Ground Speed": [100, 110, 90, 120],
+                "GPS Latitude": [3.0, 3.001, 3.002, 3.003],
+                "GPS Longitude": [101.0, 101.001, 101.002, 101.003],
+            }
+        )
+
+        figure, method = _track_figure(lap)
+
+        self.assertEqual(method, "Logged GPS coordinates")
+        self.assertEqual(figure.data[0].mode, "markers")
+        self.assertNotIn("lines", figure.data[0].mode)
 
     def test_track_map_marks_approximate_corner_apex(self):
         lap = pd.DataFrame(
