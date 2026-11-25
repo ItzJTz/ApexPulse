@@ -57,22 +57,19 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
 
     df_lap = df[df['Lap Number'] == selected_lap].dropna(subset=['G Force Lat', 'G Force Long']).copy()
 
-    # 3. Correct channel inversion (Braking = negative/down, Accel = positive/up)
-    df_lap['G Force Long Corr'] = df_lap['G Force Long'] * -1
-
-    # 4. Dynamic boundaries (Safeguarded against acceleration overfitting)
+    # 3. Dynamic boundaries (Safeguarded against acceleration overfitting)
     max_lat_g = df_lap['G Force Lat'].abs().max() 
-    max_long_decel = df_lap['G Force Long Corr'].min() 
-    max_long_accel = df_lap['G Force Long Corr'].quantile(0.99)
+    max_long_decel = df_lap['G Force Long'].min()
+    max_long_accel = df_lap['G Force Long'].quantile(0.99)
 
     # Raw absolute limits for statistics display block
     true_peak_lat = df_lap['G Force Lat'].abs().max()
-    true_peak_accel = df_lap['G Force Long Corr'].max()
-    true_peak_decel = df_lap['G Force Long Corr'].min()
+    true_peak_accel = df_lap['G Force Long'].max()
+    true_peak_decel = df_lap['G Force Long'].min()
 
     # 5. Calculate Superellipse Limit & Utilization Scores
     lat_data = df_lap['G Force Lat'].values
-    long_data = df_lap['G Force Long Corr'].values
+    long_data = df_lap['G Force Long'].values
     angles = np.arctan2(long_data, lat_data)
 
     n_exponent = float(
@@ -90,10 +87,10 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
     df_lap['Utilization %'] = np.clip((actual_g_magnitude / theoretical_limit_radius) * 100, 0, 105)
 
     # Isolate performance scores to dynamic cornering/braking zones
-    cornering_zones = (df_lap['G Force Lat'].abs() > 0.4) | (df_lap['G Force Long Corr'] < -0.4)
+    cornering_zones = (df_lap['G Force Lat'].abs() > 0.4) | (long_data < -0.4)
     lap_utilization_score = df_lap.loc[cornering_zones, 'Utilization %'].mean()
 
-    blended_inputs = (df_lap['G Force Lat'].abs() > 0.6) & (df_lap['G Force Long Corr'] < -0.4)
+    blended_inputs = (df_lap['G Force Lat'].abs() > 0.6) & (long_data < -0.4)
     trail_brake_score = df_lap.loc[blended_inputs, 'Utilization %'].mean() if blended_inputs.any() else 0.0
 
     # 6. Plotting Architecture
@@ -103,7 +100,7 @@ def generate_friction_circle(file_path, target_lap=None, output_dir='assets'):
 
     # 2D Density Heatmap
     hb = ax.hexbin(
-        df_lap['G Force Lat'], df_lap['G Force Long Corr'],
+        df_lap['G Force Lat'], long_data,
         gridsize=45, cmap='inferno', mincnt=1, edgecolors='none', alpha=0.85, zorder=2
     )
 

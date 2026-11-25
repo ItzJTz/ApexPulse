@@ -134,7 +134,7 @@ def _gg_figure(lap):
     if data.empty:
         return None
     lateral = data["G Force Lat"].to_numpy(dtype=float)
-    longitudinal = -data["G Force Long"].to_numpy(dtype=float)
+    longitudinal = data["G Force Long"].to_numpy(dtype=float)
     density, lateral_edges, longitudinal_edges = np.histogram2d(
         lateral,
         longitudinal,
@@ -1009,13 +1009,14 @@ def main():
             st.markdown(
                 "Each colored cell represents telemetry samples in a small acceleration range. "
                 "Brighter cells mean more samples were recorded there; empty ranges are left blank. "
-                "Lateral G is signed left/right. Longitudinal G is sign-inverted here, so positive "
-                "values mean acceleration and negative values mean braking."
+                "Lateral G is signed left/right. Longitudinal G is plotted as logged; for "
+                "Assetto Corsa's CG Accel Longitudinal channel, positive means acceleration "
+                "and negative means braking."
             )
             lat = pd.to_numeric(selected_lap["G Force Lat"], errors="coerce").replace(
                 [np.inf, -np.inf], np.nan
             ).dropna()
-            long = -pd.to_numeric(
+            long = pd.to_numeric(
                 selected_lap["G Force Long"], errors="coerce"
             ).replace([np.inf, -np.inf], np.nan).dropna()
             force_metrics = st.columns(3)

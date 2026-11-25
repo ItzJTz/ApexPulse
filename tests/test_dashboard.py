@@ -59,6 +59,30 @@ class DashboardTests(unittest.TestCase):
         density = np.asarray(figure.data[0].z, dtype=float)
         self.assertTrue(np.isnan(density).any())
         self.assertTrue(np.isfinite(density).any())
+        positive_acceleration_bin = (
+            np.abs(np.asarray(figure.data[0].x) - 0.1).argmin(),
+            np.abs(np.asarray(figure.data[0].y) - 0.2).argmin(),
+        )
+        negative_braking_bin = (
+            np.abs(np.asarray(figure.data[0].x) - 0.8).argmin(),
+            np.abs(np.asarray(figure.data[0].y) + 0.5).argmin(),
+        )
+        self.assertTrue(
+            np.isfinite(
+                density[
+                    positive_acceleration_bin[1],
+                    positive_acceleration_bin[0],
+                ]
+            )
+        )
+        self.assertTrue(
+            np.isfinite(
+                density[
+                    negative_braking_bin[1],
+                    negative_braking_bin[0],
+                ]
+            )
+        )
 
     def test_track_map_labels_reconstructed_path_as_approximate(self):
         lap = pd.DataFrame(

@@ -53,7 +53,7 @@ def tire_metrics(frame):
             lateral = pd.to_numeric(lap["G Force Lat"], errors="coerce").to_numpy(
                 dtype=float
             )
-            longitudinal = -pd.to_numeric(
+            longitudinal = pd.to_numeric(
                 lap["G Force Long"], errors="coerce"
             ).to_numpy(dtype=float)
             finite = np.isfinite(lateral) & np.isfinite(longitudinal)
