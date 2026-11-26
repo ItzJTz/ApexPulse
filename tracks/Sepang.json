@@ -3,7 +3,7 @@
   "ac_track_id": "sepang",
   "total_length_m": 5543,
   "direction": "clockwise",
-  "corner_distance_quality": "Approximate estimates from the published GP layout; calibrate against telemetry.",
+  "corner_distance_quality": "Approximate published GP gates scaled to measured lap distance; apexes updated from repeated PB speed minima, with flat-out turns left unmarked.",
   "official_sectors": {
     "Sector 1": [0, 1920],
     "Sector 2": [1920, 3890],
@@ -23,20 +23,20 @@
     "Turn 15 (Petronas)": [5020, 5330]
   },
   "corner_metadata": [
-    { "id": "T1", "name": "Pangkor Laut Entry", "start_m": 480, "apex_m": 670, "end_m": 750, "direction": "right", "type": "heavy_braking" },
-    { "id": "T2", "name": "Turn 2 Switchback", "start_m": 750, "apex_m": 810, "end_m": 920, "direction": "left", "type": "chicane_exit" },
-    { "id": "T3", "name": "Turn 3 Sweeper", "start_m": 1020, "apex_m": 1150, "end_m": 1300, "direction": "right", "type": "high_speed" },
-    { "id": "T4", "name": "Langkawi", "start_m": 1520, "apex_m": 1680, "end_m": 1790, "direction": "right", "type": "90_degree" },
-    { "id": "T5", "name": "Genting Left", "start_m": 1980, "apex_m": 2120, "end_m": 2240, "direction": "left", "type": "high_speed_esses" },
-    { "id": "T6", "name": "Genting Right", "start_m": 2240, "apex_m": 2360, "end_m": 2480, "direction": "right", "type": "high_speed_esses" },
-    { "id": "T7", "name": "KLIA Entry", "start_m": 2600, "apex_m": 2740, "end_m": 2820, "direction": "right", "type": "double_apex" },
-    { "id": "T8", "name": "KLIA Exit", "start_m": 2820, "apex_m": 2910, "end_m": 3020, "direction": "right", "type": "double_apex" },
-    { "id": "T9", "name": "Berjaya Tioman", "start_m": 3110, "apex_m": 3240, "end_m": 3350, "direction": "left", "type": "hairpin" },
-    { "id": "T10", "name": "Turn 10", "start_m": 3420, "apex_m": 3510, "end_m": 3610, "direction": "right", "type": "medium_sweeper" },
-    { "id": "T11", "name": "Turn 11", "start_m": 3660, "apex_m": 3760, "end_m": 3880, "direction": "right", "type": "trail_brake" },
+    { "id": "T1", "name": "Pangkor Laut Entry", "start_m": 480, "apex_m": 690, "end_m": 750, "direction": "right", "type": "heavy_braking" },
+    { "id": "T2", "name": "Turn 2 Switchback", "start_m": 750, "apex_m": 790, "end_m": 920, "direction": "left", "type": "chicane_exit" },
+    { "id": "T3", "name": "Turn 3 Sweeper", "start_m": 1020, "apex_m": null, "apex_status": "flat_out", "end_m": 1300, "direction": "right", "type": "high_speed" },
+    { "id": "T4", "name": "Langkawi", "start_m": 1520, "apex_m": 1600, "end_m": 1790, "direction": "right", "type": "90_degree" },
+    { "id": "T5", "name": "Genting Left", "start_m": 1980, "apex_m": 2210, "end_m": 2240, "direction": "left", "type": "high_speed_esses" },
+    { "id": "T6", "name": "Genting Right", "start_m": 2240, "apex_m": null, "apex_status": "flat_out", "end_m": 2480, "direction": "right", "type": "high_speed_esses" },
+    { "id": "T7", "name": "KLIA Entry", "start_m": 2600, "apex_m": 2610, "end_m": 2820, "direction": "right", "type": "double_apex" },
+    { "id": "T8", "name": "KLIA Exit", "start_m": 2820, "apex_m": null, "apex_status": "flat_out", "end_m": 3020, "direction": "right", "type": "double_apex" },
+    { "id": "T9", "name": "Berjaya Tioman", "start_m": 3110, "apex_m": 3180, "end_m": 3350, "direction": "left", "type": "hairpin" },
+    { "id": "T10", "name": "Turn 10", "start_m": 3420, "apex_m": 3570, "end_m": 3610, "direction": "right", "type": "medium_sweeper" },
+    { "id": "T11", "name": "Turn 11", "start_m": 3660, "apex_m": null, "apex_status": "flat_out", "end_m": 3880, "direction": "right", "type": "trail_brake" },
     { "id": "T12", "name": "Turn 12 Kink", "start_m": 3980, "apex_m": 4050, "end_m": 4140, "direction": "left", "type": "flat_out_kink" },
-    { "id": "T13", "name": "Turn 13 Crest", "start_m": 4140, "apex_m": 4230, "end_m": 4260, "direction": "right", "type": "blind_crest" },
-    { "id": "T14", "name": "Sunway Lagoon", "start_m": 4260, "apex_m": 4420, "end_m": 4540, "direction": "right", "type": "heavy_braking" },
+    { "id": "T13", "name": "Turn 13 Crest", "start_m": 4140, "apex_m": 4210, "end_m": 4260, "direction": "right", "type": "blind_crest" },
+    { "id": "T14", "name": "Sunway Lagoon", "start_m": 4260, "apex_m": null, "apex_status": "flat_out", "end_m": 4540, "direction": "right", "type": "heavy_braking" },
     { "id": "T15", "name": "Petronas Hairpin", "start_m": 5020, "apex_m": 5190, "end_m": 5330, "direction": "left", "type": "hairpin" }
   ]
 }

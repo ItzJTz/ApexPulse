@@ -192,6 +192,8 @@ def _add_corner_markers(figure, distance, x, y, corners):
     minimum_distance = points["distance"].iloc[0]
     maximum_distance = points["distance"].iloc[-1]
     for corner in corners:
+        if not isinstance(corner.get("apex_m"), (int, float)):
+            continue
         apex_distance = float(corner["apex_m"])
         if minimum_distance <= apex_distance <= maximum_distance:
             distances.append(apex_distance)
@@ -845,7 +847,9 @@ def main():
                 st.caption(
                     "Wheel surface speed is compared with Ground Speed; positive "
                     "values indicate wheelspin and negative values indicate wheel "
-                    "speed below vehicle speed. Values below 5 km/h are omitted."
+                    "speed below vehicle speed. The displayed trace is zeroed per "
+                    "wheel using its median steady-straight baseline; values below "
+                    "5 km/h are omitted."
                 )
             else:
                 st.info(
@@ -864,6 +868,26 @@ def main():
                         f"{wheel}: {reason}"
                         for wheel, reason in unavailable_slip.items()
                     )
+                )
+            slip_calibration = slip.attrs.get("calibration", {})
+            if slip_calibration:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Wheel": wheel,
+                                "Raw straight-line offset (%)": details[
+                                    "offset_pct"
+                                ],
+                                "Baseline samples": details["sample_count"],
+                                "Calibrated": details["available"],
+                                "Status": details.get("unavailable", ""),
+                            }
+                            for wheel, details in slip_calibration.items()
+                        ]
+                    ),
+                    hide_index=True,
+                    width="stretch",
                 )
 
             aero = aero_pitch_trace(dynamics_lap)
@@ -1153,21 +1177,28 @@ def main():
             str(
                 len(quality["laps"]["excluded_incomplete"])
                 + len(quality["laps"].get("excluded_overlength", []))
+                + len(quality["laps"].get("excluded_bad_start", []))
             ),
         )
         st.subheader("Lap coverage")
         overlength_laps = quality["laps"].get("excluded_overlength", [])
+        bad_start_laps = quality["laps"].get("excluded_bad_start", [])
         st.dataframe(
             pd.DataFrame(
                 [
                     {
                         "Lap": float(lap),
                         "Distance (m)": distance,
+                        "Start distance (m)": quality["laps"].get(
+                            "start_distance_m", {}
+                        ).get(str(lap)),
                         "Status": (
                             "Included"
                             if float(lap) in quality["laps"]["complete"]
                             else "Overlength"
                             if float(lap) in overlength_laps
+                            else "Starts too far from 0 m"
+                            if float(lap) in bad_start_laps
                             else "Incomplete"
                         ),
                     }
@@ -1189,6 +1220,38 @@ def main():
                 ),
                 hide_index=True,
                 width="stretch",
+            )
+        constant_channels = quality["channels"].get("constant_channels", {})
+        if constant_channels:
+            st.warning(
+                f"{len(constant_channels)} numeric channel(s) are constant and "
+                "cannot describe lap-to-lap or within-lap changes."
+            )
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Channel": channel,
+                            "Constant value": details["value"],
+                            "Valid samples": details["sample_count"],
+                            "Missing (%)": details["missing_percent"],
+                        }
+                        for channel, details in constant_channels.items()
+                    ]
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+        segmentation = quality.get("lap_segmentation", {})
+        if segmentation:
+            st.caption(
+                "Lap boundaries: "
+                f"{segmentation.get('method', 'unknown')} "
+                f"({segmentation.get('reset_count', 0)} distance resets); "
+                f"{segmentation.get('distance_outlier_rows', 0)} impossible "
+                "distance samples quarantined and "
+                f"{segmentation.get('transition_rows_removed', 0)} reset-transition "
+                "samples removed."
             )
         if alignment is None:
             report = quality
@@ -1253,16 +1316,22 @@ def main():
     with tabs[7]:
         st.markdown(
             "Compare the fastest complete lap in this session with the fastest complete lap "
-            "from a second telemetry file. The files should be from the same circuit and use "
+            "from a second MoTeC LD or CSV session. The files should be from the same circuit and use "
             "the same distance units."
         )
+        if len(quality["laps"]["complete"]) == 1:
+            st.info(
+                "This session has one complete lap, which is enough to compare "
+                "against the fastest lap in a second session. Upload that second "
+                "session to continue."
+            )
         comparison_upload = st.file_uploader(
-            "Upload the second driver's telemetry CSV",
-            type=("csv",),
+            "Upload the second driver's telemetry session",
+            type=("ld", "csv"),
             key="driver_comparison_upload",
         )
         if comparison_upload is None:
-            st.info("Upload a second driver's CSV to show the cross-session comparison.")
+            st.info("Upload a second LD or CSV session to show the cross-session comparison.")
         else:
             try:
                 comparison_frame = _load_upload(

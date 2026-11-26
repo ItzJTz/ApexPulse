@@ -8,7 +8,7 @@ from fastdtw import fastdtw
 from scipy.spatial.distance import euclidean
 
 from src.config import config_value
-from src.core.sector_analysis import _sector_time
+from src.core.sector_analysis import _sector_time, scale_track_config_to_distance
 from src.core.driver_inputs import analyze_driver_inputs
 from src.core.math_channels import tire_metrics
 from src.core.spatial import interpolate_spatial
@@ -209,8 +209,10 @@ def optimal_lap_analysis(frame, micro_sector_meters=None):
         raise ValueError("micro_sector_meters must be greater than zero.")
 
     valid_laps = valid_lap_numbers(frame)
-    if not valid_laps:
-        raise ValueError("No complete laps are available for optimal-lap analysis.")
+    if len(valid_laps) < 2:
+        raise ValueError(
+            "At least two complete laps are required for optimal-lap analysis."
+        )
 
     spatial_laps = {
         lap_number: (
@@ -343,6 +345,14 @@ def optimal_lap_analysis(frame, micro_sector_meters=None):
 
 
 def sector_results(frame, lap_a, lap_b, track_config):
+    shared_distance = min(
+        float(frame.loc[frame["Lap Number"] == lap, "Normalized_Dist"].max())
+        for lap in (lap_a, lap_b)
+    )
+    track_config = scale_track_config_to_distance(
+        track_config,
+        shared_distance,
+    )
     laps = {
         lap_number: frame[frame["Lap Number"] == lap_number].sort_values("Normalized_Dist")
         for lap_number in (lap_a, lap_b)
@@ -425,6 +435,13 @@ def corner_delta_breakdown(
             "Normalized_Dist"
         ),
     }
+    shared_distance = min(
+        float(lap["Normalized_Dist"].max()) for lap in laps.values()
+    )
+    track_config = scale_track_config_to_distance(
+        track_config,
+        shared_distance,
+    )
     reference_duration = lap_time_seconds(laps[reference_lap])
     elapsed = pd.to_numeric(
         laps[reference_lap].get("Time", pd.Series(dtype=float)),
@@ -505,9 +522,14 @@ def load_track_config(frame, tracks_dir=None):
     if not config_path.is_file():
         return None
     try:
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        track_config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Could not read track configuration '{config_path}': {exc}") from exc
+    lap_lengths = frame.groupby("Lap Number")["Normalized_Dist"].max()
+    if lap_lengths.empty:
+        return track_config
+    measured_distance = float(lap_lengths.median())
+    return scale_track_config_to_distance(track_config, measured_distance)
 
 
 def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):

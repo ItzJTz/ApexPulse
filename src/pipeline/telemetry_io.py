@@ -14,6 +14,8 @@ from src.pipeline.motec_ld import parse_motec_ld
 
 
 REQUIRED_CHANNELS = ("Lap Number", "Lap Distance", "Ground Speed")
+LAP_START_TOLERANCE_M = 100.0
+DISTANCE_OUTLIER_FRACTION = 1.05
 
 
 def _key(value):
@@ -159,7 +161,7 @@ def _resolve_track(path, metadata, tracks_dir=None):
     if not tracks_path.is_dir():
         return None
 
-    candidates = [Path(path).stem, metadata.get("venue", "")]
+    candidates = [Path(path).stem if path else "", metadata.get("venue", "")]
     normalized_candidates = [_key(candidate) for candidate in candidates if candidate]
     matches = []
     for config_path in tracks_path.glob("*.json"):
@@ -178,8 +180,135 @@ def _resolve_track(path, metadata, tracks_dir=None):
     return max(matches)[1] if matches else None
 
 
+def _track_length(track, tracks_dir=None):
+    if not track:
+        return None
+    tracks_path = (
+        Path(tracks_dir)
+        if tracks_dir
+        else Path(__file__).resolve().parents[2] / "tracks"
+    )
+    config_path = tracks_path / f"{track}.json"
+    if not config_path.is_file():
+        return None
+    try:
+        track_length = json.loads(config_path.read_text(encoding="utf-8")).get(
+            "total_length_m"
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read track configuration '{config_path}': {exc}") from exc
+    if (
+        not isinstance(track_length, (int, float))
+        or not math.isfinite(track_length)
+        or track_length <= 0
+    ):
+        raise ValueError(f"Track configuration '{config_path}' has an invalid total_length_m.")
+    return float(track_length)
+
+
+def _split_laps_on_distance_resets(frame, track_length):
+    """Split hotlap files chronologically when Lap Distance resets at the line."""
+    elapsed = pd.to_numeric(frame["Time"], errors="coerce").dropna()
+    time_ordered = len(elapsed) < 2 or elapsed.is_monotonic_increasing
+    df = (
+        frame.sort_values("Time", kind="stable").copy()
+        if time_ordered
+        else frame.copy()
+    )
+    distance = pd.to_numeric(df["Lap Distance"], errors="coerce")
+    plausible = distance.between(0, track_length * DISTANCE_OUTLIER_FRACTION)
+    dropped_distance_rows = int((~plausible).sum())
+    df = df.loc[plausible].copy()
+    if df.empty:
+        return df, {
+            "method": "distance_reset",
+            "ordering": "elapsed_time" if time_ordered else "source_row_order",
+            "reset_count": 0,
+            "distance_outlier_rows": dropped_distance_rows,
+            "transition_rows_removed": 0,
+        }
+
+    distances = pd.to_numeric(df["Lap Distance"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    reset_indices = []
+    transition_indices = set()
+    armed = False
+    last_near_finish = None
+    for index, value in enumerate(distances):
+        if value >= track_length * 0.8:
+            armed = True
+            last_near_finish = index
+        elif armed and value <= track_length * 0.1:
+            future = distances[index : index + 7]
+            positive_steps = (
+                np.diff(future) > 0
+                if len(future) > 1
+                else np.array([], dtype=bool)
+            )
+            reset_confirmed = (
+                len(positive_steps) >= 2
+                and int(positive_steps.sum()) >= 2
+                and future[-1] > future[0]
+                and future[-1] < track_length * 0.2
+            )
+            tail_reset = len(distances) - index <= 7
+            if not reset_confirmed and not tail_reset:
+                continue
+            reset_indices.append(index)
+            if last_near_finish is not None and index - last_near_finish > 1:
+                transition_indices.update(range(last_near_finish + 1, index))
+            armed = False
+            last_near_finish = None
+
+    if transition_indices:
+        keep = np.ones(len(df), dtype=bool)
+        keep[list(transition_indices)] = False
+        df = df.iloc[keep].copy()
+        reset_indices = [
+            index - sum(removed < index for removed in transition_indices)
+            for index in reset_indices
+        ]
+
+    if reset_indices:
+        lap_numbers = np.zeros(len(df), dtype=int)
+        for lap_number, reset_index in enumerate(reset_indices, start=1):
+            lap_numbers[reset_index:] += 1
+        df["Source Lap Number"] = df["Lap Number"].to_numpy(copy=True)
+        df["Lap Number"] = lap_numbers
+        df["Lap Start Distance"] = df.groupby("Lap Number", sort=False)[
+            "Lap Distance"
+        ].transform("first")
+        if "Lap Time" in df.columns and time_ordered:
+            elapsed = pd.to_numeric(df["Time"], errors="coerce")
+            df["Lap Time"] = elapsed - df.groupby("Lap Number", sort=False)[
+                "Time"
+            ].transform("first")
+        segmentation = {
+            "method": "distance_reset",
+            "ordering": "elapsed_time" if time_ordered else "source_row_order",
+            "reset_count": len(reset_indices),
+            "distance_outlier_rows": dropped_distance_rows,
+            "transition_rows_removed": len(transition_indices),
+        }
+    else:
+        if time_ordered:
+            df = df.sort_values("Time", kind="stable")
+        df["Lap Start Distance"] = df.groupby("Lap Number", sort=False)[
+            "Lap Distance"
+        ].transform("first")
+        segmentation = {
+            "method": "source_lap_number",
+            "ordering": "elapsed_time" if time_ordered else "source_row_order",
+            "reset_count": 0,
+            "distance_outlier_rows": dropped_distance_rows,
+            "transition_rows_removed": 0,
+        }
+    return df, segmentation
+
+
 def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=None):
-    """Canonicalize core channel names, validate samples, and sort by lap distance."""
+    """Canonicalize channels and preserve chronological order within each lap."""
     input_rows = len(frame)
     df = frame.copy()
     df.columns = [str(column).strip() for column in df.columns]
@@ -385,29 +514,81 @@ def prepare_telemetry_frame(frame, source_path=None, metadata=None, tracks_dir=N
         quarantine["lateral_g_outlier_samples"] = int(lateral_outlier.sum())
         df.loc[lateral_outlier, "G Force Lat"] = np.nan
 
-    df = df.sort_values(["Lap Number", "Lap Distance"], kind="stable")
-    repeated_distance_samples = int(
-        df.duplicated(["Lap Number", "Lap Distance"]).sum()
-    )
-    df["Normalized_Dist"] = df.groupby("Lap Number")["Lap Distance"].transform(
-        lambda distance: distance - distance.min()
-    )
-
     track_metadata = dict(metadata or {})
     if "venue" not in track_metadata and "Track" in df.columns:
         existing_tracks = df["Track"].dropna().astype(str).unique()
         if len(existing_tracks) == 1:
             track_metadata["venue"] = existing_tracks[0]
-    track = _resolve_track(source_path, track_metadata, tracks_dir) if source_path else None
+    track = _resolve_track(source_path, track_metadata, tracks_dir)
+    track_length = _track_length(track, tracks_dir)
+    if track_length is not None and "Time" in df.columns:
+        df, lap_segmentation = _split_laps_on_distance_resets(df, track_length)
+    else:
+        if "Time" in df.columns:
+            elapsed = pd.to_numeric(df["Time"], errors="coerce").dropna()
+            if len(elapsed) < 2 or elapsed.is_monotonic_increasing:
+                df = df.sort_values("Time", kind="stable")
+        else:
+            df = df.sort_values(["Lap Number", "Lap Distance"], kind="stable")
+        df["Lap Start Distance"] = df.groupby("Lap Number", sort=False)[
+            "Lap Distance"
+        ].transform("first")
+        lap_segmentation = {
+            "method": "source_lap_number",
+            "ordering": (
+                "elapsed_time"
+                if "Time" in df.columns
+                and pd.to_numeric(df["Time"], errors="coerce")
+                .dropna()
+                .is_monotonic_increasing
+                else "source_row_order"
+            ),
+            "reset_count": 0,
+            "distance_outlier_rows": 0,
+            "transition_rows_removed": 0,
+        }
+    if df.empty:
+        raise ValueError("Telemetry contains no plausible lap-distance samples.")
+    repeated_distance_samples = int(
+        df.duplicated(["Lap Number", "Lap Distance"]).sum()
+    )
+    df["Normalized_Dist"] = df["Lap Distance"] - df["Lap Start Distance"]
+
     if track:
         df["Track"] = track
+    constant_channels = {}
+    non_signal_columns = {
+        "Lap Number",
+        "Lap Distance",
+        "Lap Start Distance",
+        "Normalized_Dist",
+        "Source Lap Number",
+        "Distance",
+        "Time",
+        "Lap Time",
+    }
+    for column in df.select_dtypes(include=[np.number]).columns:
+        if column in non_signal_columns:
+            continue
+        values = pd.to_numeric(df[column], errors="coerce").dropna()
+        if len(values) and values.nunique() == 1:
+            constant_channels[column] = {
+                "value": float(values.iloc[0]),
+                "sample_count": int(len(values)),
+                "missing_percent": round(
+                    float(df[column].isna().mean() * 100),
+                    2,
+                ),
+            }
     df.attrs["quality"] = {
         "source_rows": input_rows,
         "invalid_required_rows": input_rows - rows_with_valid_required_channels,
         "repeated_distance_samples": repeated_distance_samples,
+        "lap_segmentation": lap_segmentation,
         "source_channels": list(frame.columns),
         "required_channel_mapping": source_columns,
         "optional_channel_missing_percent": missing_percent,
+        "constant_channels": constant_channels,
         "detected_track": track,
         "outlier_quarantine": quarantine,
     }
@@ -571,9 +752,29 @@ def process_session(
     complete_distance = (lap_lengths >= threshold) & (
         lap_lengths <= maximum_distance
     )
-    valid_laps = lap_lengths[complete_distance].index.tolist()
-    incomplete_laps = lap_lengths[lap_lengths < threshold].index.tolist()
-    overlength_laps = lap_lengths[lap_lengths > maximum_distance].index.tolist()
+    start_distances = (
+        frame.groupby("Lap Number")["Lap Start Distance"].first()
+        if "Lap Start Distance" in frame.columns
+        else frame.groupby("Lap Number")["Lap Distance"].first()
+    )
+    valid_start = start_distances.abs() <= LAP_START_TOLERANCE_M
+    valid_lap_mask = complete_distance & valid_start.reindex(
+        lap_lengths.index, fill_value=False
+    )
+    valid_laps = lap_lengths[valid_lap_mask].index.tolist()
+    incomplete_laps = lap_lengths[
+        (lap_lengths < threshold)
+        & valid_start.reindex(lap_lengths.index, fill_value=False)
+    ].index.tolist()
+    overlength_laps = lap_lengths[
+        (lap_lengths > maximum_distance)
+        & valid_start.reindex(lap_lengths.index, fill_value=False)
+    ].index.tolist()
+    bad_start_laps = [
+        lap
+        for lap in lap_lengths.index
+        if not bool(valid_start.get(lap, False))
+    ]
     result = frame[frame["Lap Number"].isin(valid_laps)].copy().reset_index(drop=True)
     if result.empty:
         raise ValueError(
@@ -610,6 +811,7 @@ def process_session(
         "maximum_lap_fraction": maximum_fraction,
         "minimum_lap_distance_m": round(float(threshold), 2),
         "maximum_lap_distance_m": round(float(maximum_distance), 2),
+        "maximum_lap_start_distance_m": LAP_START_TOLERANCE_M,
         "rows": {
             "source": quality.get("source_rows", len(frame)),
             "invalid_required_data": quality.get("invalid_required_rows", 0),
@@ -622,7 +824,14 @@ def process_session(
             "lateral_g_outlier_quarantined": quality.get(
                 "outlier_quarantine", {}
             ).get("lateral_g_outlier_samples", 0),
+            "distance_outlier_quarantined": quality.get(
+                "lap_segmentation", {}
+            ).get("distance_outlier_rows", 0),
+            "transition_rows_removed": quality.get(
+                "lap_segmentation", {}
+            ).get("transition_rows_removed", 0),
         },
+        "lap_segmentation": quality.get("lap_segmentation", {}),
         "signal_filter": {
             **filter_report,
             "rolling_median_window": median_window,
@@ -635,15 +844,21 @@ def process_session(
             "conversion_warnings": quality.get("conversion_warnings", []),
             "source_metadata": quality.get("source_metadata", {}),
             "optional_missing_percent": quality.get("optional_channel_missing_percent", {}),
+            "constant_channels": quality.get("constant_channels", {}),
         },
         "laps": {
             "total": int(len(lap_lengths)),
             "complete": [float(lap) for lap in valid_laps],
             "excluded_incomplete": [float(lap) for lap in incomplete_laps],
             "excluded_overlength": [float(lap) for lap in overlength_laps],
+            "excluded_bad_start": [float(lap) for lap in bad_start_laps],
             "distance_m": {
                 str(lap): round(float(distance), 2)
                 for lap, distance in lap_lengths.items()
+            },
+            "start_distance_m": {
+                str(lap): round(float(distance), 2)
+                for lap, distance in start_distances.items()
             },
         },
         "fastest_complete_laps": [
@@ -752,23 +967,7 @@ def _configured_track_length(frame):
     tracks = frame["Track"].dropna().astype(str).unique()
     if len(tracks) != 1:
         return None
-    tracks_path = Path(__file__).resolve().parents[2] / "tracks"
-    config_path = tracks_path / f"{tracks[0]}.json"
-    if not config_path.is_file():
-        return None
-    try:
-        track_length = json.loads(config_path.read_text(encoding="utf-8")).get(
-            "total_length_m"
-        )
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Could not read track configuration '{config_path}': {exc}") from exc
-    if (
-        not isinstance(track_length, (int, float))
-        or not math.isfinite(track_length)
-        or track_length <= 0
-    ):
-        raise ValueError(f"Track configuration '{config_path}' has an invalid total_length_m.")
-    return float(track_length)
+    return _track_length(tracks[0])
 
 
 def valid_lap_numbers(frame, minimum_fraction=None, track_length=None):
@@ -799,9 +998,16 @@ def valid_lap_numbers(frame, minimum_fraction=None, track_length=None):
         if track_length is not None
         else reference_length
     )
+    if "Lap Start Distance" in frame.columns:
+        starts = frame.groupby("Lap Number")["Lap Start Distance"].first()
+    elif "Lap Distance" in frame.columns:
+        starts = frame.groupby("Lap Number")["Lap Distance"].first()
+    else:
+        starts = pd.Series(0.0, index=lap_lengths.index)
+    valid_start = starts.abs() <= LAP_START_TOLERANCE_M
     valid = (lap_lengths >= minimum_fraction * reference_length) & (
         lap_lengths <= maximum_distance
-    )
+    ) & valid_start.reindex(lap_lengths.index, fill_value=False)
     return lap_lengths[valid].index.tolist()
 
 

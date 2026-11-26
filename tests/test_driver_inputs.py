@@ -248,13 +248,30 @@ class DriverInputTests(unittest.TestCase):
             map_distance_to_corner(5190, track_config),
             "T15 Petronas Hairpin",
         )
+        flat_out_corners = [
+            corner
+            for corner in track_config["corner_metadata"]
+            if corner.get("apex_status") == "flat_out"
+        ]
+        self.assertEqual(
+            [corner["id"] for corner in flat_out_corners],
+            ["T3", "T6", "T8", "T11", "T14"],
+        )
         self.assertEqual(
             [
                 map_distance_to_corner(corner["apex_m"], track_config).split()[0]
                 for corner in track_config["corner_metadata"]
+                if isinstance(corner["apex_m"], (int, float))
             ],
-            [f"T{index}" for index in range(1, 16)],
+            ["T1", "T2", "T4", "T5", "T7", "T9", "T10", "T12", "T13", "T15"],
         )
+        for corner in flat_out_corners:
+            midpoint = (corner["start_m"] + corner["end_m"]) / 2
+            self.assertTrue(
+                map_distance_to_corner(midpoint, track_config).startswith(
+                    corner["id"]
+                )
+            )
 
     def test_track_agnostic_apex_detection_finds_local_speed_minima(self):
         distance = np.arange(0, 1000, 10, dtype=float)
@@ -317,6 +334,38 @@ class DriverInputTests(unittest.TestCase):
         self.assertEqual(event["detector"], "loaded_throttle_snaps_m")
         self.assertEqual(event["corner"], "T1 Auto-detected corner 1")
         self.assertEqual(result["auto_detected_corners"][0]["id"], "T1")
+
+    def test_auto_blip_after_downshift_is_ignored_but_later_snap_is_kept(self):
+        count = 15
+        throttle = np.zeros(count)
+        throttle[3] = 30
+        throttle[14] = 25
+        gear = np.full(count, 4)
+        gear[2:] = 3
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * count,
+                    "Lap Distance": np.arange(count, dtype=float),
+                    "Ground Speed": [100] * count,
+                    "Time": np.arange(count, dtype=float) / 50,
+                    "Throttle Pos": throttle,
+                    "Brake Pos": np.zeros(count),
+                    "Steering": np.full(count, 25),
+                    "Gear": gear,
+                }
+            )
+        )
+
+        result = analyze_driver_inputs(frame, 1)
+
+        snap_events = [
+            event
+            for event in result["raw_events"]
+            if event["detector"] == "loaded_throttle_snaps_m"
+        ]
+        self.assertEqual(len(snap_events), 1)
+        self.assertEqual(snap_events[0]["sample_index"], 14)
 
     def test_corner_delta_breakdown_ranks_time_loss_against_reference_trace(self):
         frame = prepare_telemetry_frame(

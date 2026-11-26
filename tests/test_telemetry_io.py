@@ -146,7 +146,7 @@ class TelemetryIoTests(unittest.TestCase):
                 "converted_session.csv",
             )
 
-        self.assertEqual(frame["Lap Number"].tolist(), [1, 1, 1, 2, 2, 2])
+        self.assertEqual(frame["Lap Number"].tolist(), [0, 0, 0, 1, 1, 1])
         self.assertEqual(frame["Lap Distance"].tolist(), [0, 100, 200, 0, 100, 200])
         self.assertEqual(frame["Ground Speed"].tolist(), [36] * 6)
         self.assertEqual(frame["Gear"].tolist(), [4, 6, 8, 4, 6, 8])
@@ -166,7 +166,7 @@ class TelemetryIoTests(unittest.TestCase):
             ["Ground Speed in m/s was converted to km/h."],
         )
         self.assertEqual(report["source_format"], "MoTeC LD")
-        self.assertEqual(report["laps"]["complete"], [1.0, 2.0])
+        self.assertEqual(report["laps"]["complete"], [0.0, 1.0])
         self.assertEqual(csv_roundtrip["Ground Speed"].tolist(), [36] * 6)
 
     def test_resamples_mixed_rate_ld_channels_and_keeps_lap_numbers_discrete(self):
@@ -294,7 +294,102 @@ class TelemetryIoTests(unittest.TestCase):
         self.assertEqual(frame["Track"].unique().tolist(), ["TestCircuit"])
         self.assertEqual(frame["Normalized_Dist"].tolist(), [0, 50, 100, 0, 50, 100])
         self.assertEqual(frame.attrs["quality"]["channel_units"], {})
-        self.assertEqual(fastest_lap_numbers(frame), [2, 1])
+        self.assertEqual(fastest_lap_numbers(frame), [1, 0])
+
+    def test_splits_hotlap_on_distance_resets_and_discards_transition_glitches(self):
+        distances = [
+            800,
+            900,
+            *range(0, 1001),
+            700,
+            200,
+            0,
+            *range(1, 1001),
+            0,
+            1,
+            2,
+        ]
+        frame = pd.DataFrame(
+            {
+                "Lap Number": [0] * len(distances),
+                "Lap Distance": distances,
+                "Ground Speed": [100] * len(distances),
+                "Time": np.arange(len(distances), dtype=float) / 50,
+                "Lap Time": [999] * len(distances),
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            tracks = Path(temporary_directory)
+            (tracks / "TestCircuit.json").write_text(
+                json.dumps(
+                    {
+                        "circuit_name": "Test Circuit GP",
+                        "total_length_m": 1000,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            prepared = prepare_telemetry_frame(
+                frame,
+                "hotlap.csv",
+                {"venue": "Test Circuit GP"},
+                tracks,
+            )
+            clean, report = process_session(
+                prepared,
+                rolling_median_window=1,
+            )
+
+        self.assertEqual(
+            prepared["Lap Number"].drop_duplicates().tolist(),
+            [0, 1, 2, 3],
+        )
+        self.assertTrue(prepared["Time"].is_monotonic_increasing)
+        self.assertEqual(
+            report["lap_segmentation"]["method"],
+            "distance_reset",
+        )
+        self.assertEqual(report["lap_segmentation"]["reset_count"], 3)
+        self.assertEqual(
+            report["lap_segmentation"]["transition_rows_removed"],
+            2,
+        )
+        self.assertEqual(report["laps"]["complete"], [1.0, 2.0])
+        self.assertEqual(report["laps"]["excluded_bad_start"], [0.0])
+        self.assertEqual(report["laps"]["excluded_incomplete"], [3.0])
+        self.assertAlmostEqual(float(clean["Lap Time"].max()), 20.0)
+        self.assertAlmostEqual(lap_time_seconds(clean), 20.0)
+
+    def test_valid_laps_must_start_near_zero(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            tracks = Path(temporary_directory)
+            (tracks / "TestCircuit.json").write_text(
+                json.dumps(
+                    {
+                        "circuit_name": "Test Circuit GP",
+                        "total_length_m": 1000,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            frame = prepare_telemetry_frame(
+                pd.DataFrame(
+                    {
+                        "Time": list(range(10)),
+                        "Lap Number": [1] * 10,
+                        "Lap Distance": list(range(150, 1051, 100)),
+                        "Ground Speed": [100] * 10,
+                    }
+                ),
+                "test.csv",
+                {"venue": "Test Circuit GP"},
+                tracks,
+            )
+
+        self.assertEqual(
+            valid_lap_numbers(frame, minimum_fraction=0.9, track_length=1000),
+            [],
+        )
 
     def test_normalizes_channels_sorts_and_deduplicates(self):
         frame = pd.DataFrame(
@@ -395,10 +490,11 @@ class TelemetryIoTests(unittest.TestCase):
 
         clean, report = process_session(frame, rolling_median_window=1)
 
-        self.assertEqual(report["laps"]["complete"], [1.0])
-        self.assertEqual(report["laps"]["excluded_overlength"], [0.0])
-        self.assertEqual(report["laps"]["excluded_incomplete"], [2.0])
-        self.assertEqual(valid_lap_numbers(clean), [1])
+        self.assertEqual(report["laps"]["complete"], [0.0])
+        self.assertEqual(report["laps"]["excluded_overlength"], [])
+        self.assertEqual(report["laps"]["excluded_incomplete"], [1.0])
+        self.assertEqual(report["rows"]["distance_outlier_quarantined"], 1)
+        self.assertEqual(valid_lap_numbers(clean), [0])
 
     def test_session_report_accounts_for_bad_rows_duplicates_and_partial_laps(self):
         frame = prepare_telemetry_frame(
@@ -408,6 +504,7 @@ class TelemetryIoTests(unittest.TestCase):
                     "Lap Distance": [0, 50, 100, 50, 0, 50, 0],
                     "Ground Speed": [36, 36, 36, 36, 36, 36, None],
                     "Throttle Pos": [0, 50, 100, 50, 0, 50, 0],
+                    "Brake Temp FL": [26] * 7,
                 }
             )
         )
@@ -423,6 +520,14 @@ class TelemetryIoTests(unittest.TestCase):
         self.assertEqual(
             report["channels"]["optional_missing_percent"]["Throttle Pos"],
             0.0,
+        )
+        self.assertEqual(
+            report["channels"]["constant_channels"]["Brake Temp FL"]["value"],
+            26.0,
+        )
+        self.assertNotIn(
+            "Lap Number",
+            report["channels"]["constant_channels"],
         )
 
     def test_zero_phase_filter_and_outlier_quarantine_are_reported(self):

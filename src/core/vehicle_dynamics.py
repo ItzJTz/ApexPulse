@@ -16,6 +16,7 @@ from src.pipeline.telemetry_io import lap_time_seconds, valid_lap_numbers
 
 
 WHEELS = ("FL", "FR", "RL", "RR")
+MINIMUM_SLIP_CALIBRATION_SAMPLES = 20
 
 
 def _numeric(frame, column):
@@ -72,6 +73,23 @@ def wheel_slip_ratio_trace(lap):
     result = pd.DataFrame({"distance_m": _numeric(lap, "Normalized_Dist")})
     unit_map = lap.attrs.get("quality", {}).get("channel_units", {})
     unavailable = {}
+    calibration = {}
+    if "Steering" in lap.columns and "Brake Pos" in lap.columns:
+        steering = _numeric(lap, "Steering")
+        brake = _numeric(lap, "Brake Pos")
+        steady_straight = (
+            valid_speed
+            & np.isfinite(steering)
+            & np.isfinite(brake)
+            & (np.abs(steering) <= 5.0)
+            & (brake <= 3.0)
+            & (ground_speed >= max(minimum_speed, 80.0))
+        )
+        if "G Force Lat" in lap.columns:
+            lateral_g = _numeric(lap, "G Force Lat")
+            steady_straight &= np.isfinite(lateral_g) & (np.abs(lateral_g) <= 0.2)
+    else:
+        steady_straight = np.zeros(len(lap), dtype=bool)
 
     for wheel in WHEELS:
         speed_column = _wheel_channel(
@@ -150,9 +168,32 @@ def wheel_slip_ratio_trace(lap):
             / ground_speed[valid]
             * 100.0
         )
+        baseline_samples = ratio[steady_straight & np.isfinite(ratio)]
+        if len(baseline_samples) >= MINIMUM_SLIP_CALIBRATION_SAMPLES:
+            offset = float(np.median(baseline_samples))
+            ratio[np.isfinite(ratio)] -= offset
+            calibration[wheel] = {
+                "offset_pct": offset,
+                "sample_count": int(len(baseline_samples)),
+                "method": "median steady-straight slip",
+                "available": True,
+            }
+        else:
+            calibration[wheel] = {
+                "offset_pct": None,
+                "sample_count": int(len(baseline_samples)),
+                "method": "median steady-straight slip",
+                "available": False,
+                "unavailable": (
+                    "At least "
+                    f"{MINIMUM_SLIP_CALIBRATION_SAMPLES} steady-straight samples "
+                    "are required for per-wheel zero calibration."
+                ),
+            }
         result[f"slip_ratio_{wheel}_pct"] = ratio
         unavailable[wheel] = None
     result.attrs["unavailable"] = unavailable
+    result.attrs["calibration"] = calibration
     return result
 
 
@@ -634,6 +675,7 @@ def vehicle_dynamics_analysis(lap):
         },
         "wheel_slip_ratio": {
             "by_wheel": slip_summary,
+            "calibration": slip.attrs.get("calibration", {}),
             "reference_speed": "Ground Speed",
             "ratio_definition": "(wheel surface speed - ground speed) / ground speed × 100",
         },

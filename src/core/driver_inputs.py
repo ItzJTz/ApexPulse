@@ -10,6 +10,7 @@ from src.core.signal_rates import (
     native_sample_rate_hz,
     smoothed_derivative,
 )
+from src.core.sector_analysis import scale_track_config_to_distance
 
 
 DEFAULT_SAMPLE_RATE_HZ = 50.0
@@ -108,21 +109,44 @@ def _corner_label(corner, is_sepang):
 
 
 def map_distance_to_corner(distance_m, track_config=None):
-    """Map a distance to the nearest configured apex and return its corner label."""
+    """Map an in-corner distance to its configured label without extrapolation."""
     try:
         distance = float(distance_m)
     except (TypeError, ValueError):
         return None
     corners = track_config.get("corner_metadata", []) if track_config else []
+    corners = [
+        corner
+        for corner in corners
+        if isinstance(corner.get("start_m"), (int, float))
+        and isinstance(corner.get("end_m"), (int, float))
+    ]
     if not math.isfinite(distance) or not corners:
         return None
     circuit_name = str(track_config.get("circuit_name", "")).casefold()
     is_sepang = "sepang" in circuit_name or str(
         track_config.get("ac_track_id", "")
     ).casefold() == "sepang"
+    containing = [
+        corner
+        for corner in corners
+        if float(corner.get("start_m", -math.inf))
+        <= distance
+        <= float(corner.get("end_m", math.inf))
+    ]
+    candidates = containing
+    if not candidates:
+        return None
     corner = min(
-        corners,
-        key=lambda item: abs(float(item["apex_m"]) - distance),
+        candidates,
+        key=lambda item: abs(
+            float(
+                item["apex_m"]
+                if isinstance(item.get("apex_m"), (int, float))
+                else (item["start_m"] + item["end_m"]) / 2
+            )
+            - distance
+        ),
     )
     return _corner_label(corner, is_sepang)
 
@@ -220,20 +244,27 @@ def auto_detect_apexes(
 def _lap_samples(frame, lap_number, sample_rate_hz):
     lap = frame[frame["Lap Number"] == lap_number].copy()
     lap["_distance"] = pd.to_numeric(lap["Normalized_Dist"], errors="coerce")
+    time_is_ordered = False
     if "Time" in lap:
         times = pd.to_numeric(lap["Time"], errors="coerce").to_numpy(dtype=float)
-        lap["_time"] = times
-        order_columns = ["_time", "_distance"]
+        finite_times = pd.Series(times).dropna()
+        time_is_ordered = finite_times.is_monotonic_increasing
+        if time_is_ordered:
+            lap["_time"] = times
+            order_columns = ["_time"]
+        else:
+            times = np.arange(len(lap), dtype=float) / sample_rate_hz
+            order_columns = []
     else:
         times = np.arange(len(lap), dtype=float) / sample_rate_hz
         order_columns = ["_distance"]
-    lap = (
-        lap.replace([np.inf, -np.inf], np.nan)
-        .dropna(subset=["_distance"])
-        .sort_values(order_columns, kind="stable")
-        .reset_index(drop=True)
+    lap = lap.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["_distance"]
     )
-    if "Time" in lap:
+    if order_columns:
+        lap = lap.sort_values(order_columns, kind="stable")
+    lap = lap.reset_index(drop=True)
+    if "Time" in lap and time_is_ordered:
         times = pd.to_numeric(lap["Time"], errors="coerce").to_numpy(dtype=float)
     if len(times) > 1:
         valid_deltas = np.diff(times)
@@ -282,6 +313,8 @@ def _double_braking_events(channels, corners):
     distance = channels["Distance"]
     events = []
     for corner in corners:
+        if not isinstance(corner.get("apex_m"), (int, float)):
+            continue
         apex = float(corner["apex_m"])
         in_window = np.flatnonzero(
             (distance >= apex - 150.0)
@@ -391,8 +424,16 @@ def analyze_driver_inputs(
             }
         )
     )
+    scaled_track_config = scale_track_config_to_distance(
+        track_config,
+        float(np.nanmax(distance)) if len(distance) else 0.0,
+    )
     if not corners and track_config:
-        corners = track_config.get("corner_metadata", [])
+        corners = (
+            scaled_track_config.get("corner_metadata", [])
+            if scaled_track_config
+            else []
+        )
     events_by_detector = {
         "double_braking_m": _double_braking_events(channels, corners),
         "abrupt_brake_release_m": [],
@@ -409,6 +450,12 @@ def analyze_driver_inputs(
             native_sample_rate_hz(frame, "Brake Pos"),
         )
         throttle_slope = np.diff(throttle) / delta_time
+        downshift_indices = np.flatnonzero(
+            (gear[1:] < gear[:-1])
+            & np.isfinite(gear[1:])
+            & np.isfinite(gear[:-1])
+        ) + 1
+        downshift_times = channels["Time"][downshift_indices]
         for slope_index in np.flatnonzero(
             (brake_slope < -600) & np.isfinite(brake_slope)
         ):
@@ -429,6 +476,18 @@ def analyze_driver_inputs(
             & np.isfinite(throttle_slope)
         ):
             index = int(offset + 1)
+            if len(downshift_times):
+                previous = np.searchsorted(
+                    downshift_times,
+                    channels["Time"][index],
+                    side="right",
+                ) - 1
+                if (
+                    previous >= 0
+                    and channels["Time"][index] - downshift_times[previous]
+                    <= 0.2 + 1e-9
+                ):
+                    continue
             events_by_detector["loaded_throttle_snaps_m"].append(
                 _event(distance[index], index, slope_percent_s=float(throttle_slope[offset]))
             )
@@ -497,13 +556,16 @@ def analyze_driver_inputs(
         if not available[detector]:
             continue
         for event in events:
+            mapped_corner = map_distance_to_corner(
+                event["distance_m"],
+                scaled_track_config,
+            )
             raw_events.append(
                 {
                     "detector": detector,
                     **event,
-                    "corner": _map_to_detected_corner(
-                        event["distance_m"], corners
-                    ),
+                    "corner": mapped_corner
+                    or _map_to_detected_corner(event["distance_m"], corners),
                 }
             )
 

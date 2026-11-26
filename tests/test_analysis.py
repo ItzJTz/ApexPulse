@@ -14,8 +14,8 @@ from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 class LapAlignmentTests(unittest.TestCase):
     def test_reference_benchmark_is_selected_by_track(self):
-        self.assertEqual(reference_lap_target_seconds("Sepang"), 144.650)
-        self.assertEqual(reference_lap_target_seconds("Unknown"), 144.650)
+        self.assertEqual(reference_lap_target_seconds("Sepang"), 144.640)
+        self.assertEqual(reference_lap_target_seconds("Unknown"), 144.640)
 
     def test_delta_is_positive_when_compared_lap_is_faster_and_includes_endpoint(self):
         frame = prepare_telemetry_frame(
@@ -166,6 +166,23 @@ class LapAlignmentTests(unittest.TestCase):
             result["potential_gain_seconds"],
             result["actual_best_seconds"] - result["theoretical_best_seconds"],
         )
+
+    def test_optimal_lap_requires_two_complete_laps(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1, 1, 1],
+                    "Lap Distance": [0, 50, 100],
+                    "Ground Speed": [72, 72, 72],
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "At least two complete laps",
+        ):
+            optimal_lap_analysis(frame, micro_sector_meters=50)
 
     def test_optimal_lap_keeps_recorded_and_theoretical_times_consistent(self):
         frame = prepare_telemetry_frame(

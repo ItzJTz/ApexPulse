@@ -60,6 +60,49 @@ class VehicleDynamicsTests(unittest.TestCase):
             unavailable.attrs["unavailable"]["FL"],
         )
 
+    def test_wheel_slip_is_zeroed_from_per_wheel_steady_straight_baseline(self):
+        count = 30
+        ground_speed = np.full(count, 100.0)
+        radius = np.full(count, 0.3)
+        angular_speed = np.full(count, (100 * 0.967 / 3.6) / 0.3)
+        angular_speed[20:] = (100 * 1.1 / 3.6) / 0.3
+        values = {
+            "Normalized_Dist": np.arange(count, dtype=float),
+            "Ground Speed": ground_speed,
+            "Steering": np.zeros(count),
+            "Brake Pos": np.zeros(count),
+            "G Force Lat": np.zeros(count),
+        }
+        for wheel in ("FL", "FR", "RL", "RR"):
+            values[f"Wheel Angular Speed {wheel}"] = angular_speed
+            values[f"Tire Loaded Radius {wheel}"] = radius
+        lap = pd.DataFrame(values)
+        lap.attrs["quality"] = {
+            "channel_units": {
+                **{
+                    f"Wheel Angular Speed {wheel}": "rad/s"
+                    for wheel in ("FL", "FR", "RL", "RR")
+                },
+                **{
+                    f"Tire Loaded Radius {wheel}": "m"
+                    for wheel in ("FL", "FR", "RL", "RR")
+                },
+            }
+        }
+
+        result = wheel_slip_ratio_trace(lap)
+
+        self.assertAlmostEqual(result.loc[0, "slip_ratio_FL_pct"], 0, places=8)
+        self.assertAlmostEqual(result.loc[25, "slip_ratio_FL_pct"], 13.3, places=8)
+        calibration = result.attrs["calibration"]["FL"]
+        self.assertAlmostEqual(calibration["offset_pct"], -3.3, places=8)
+        self.assertEqual(calibration["sample_count"], count)
+        self.assertTrue(calibration["available"])
+
+        short_trace = wheel_slip_ratio_trace(lap.iloc[:10])
+        self.assertFalse(short_trace.attrs["calibration"]["FL"]["available"])
+        self.assertIsNone(short_trace.attrs["calibration"]["FL"]["offset_pct"])
+
     def test_aero_trace_reports_relative_sensor_motion_without_claiming_downforce(self):
         lap = pd.DataFrame(
             {
