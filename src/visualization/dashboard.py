@@ -8,7 +8,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from src.config import config_value
+from src.config import config_value, save_driver_input_settings
 from src.core.analysis import (
     align_driver_sessions,
     align_laps,
@@ -121,6 +121,100 @@ def _input_figure(frame, lap_a, lap_b, alignment):
         legend={"orientation": "h", "y": 1.04, "x": 1, "xanchor": "right"},
     )
     return figure
+
+
+def _render_driver_input_settings():
+    active_profile = config_value("driver_inputs", "active_profile")
+    profiles = config_value("driver_inputs", "profiles")
+    if not isinstance(profiles, dict):
+        raise ValueError("driver_inputs.profiles must be a mapping.")
+    profile_names = list(profiles)
+    if not profile_names:
+        raise ValueError("At least one driver input profile must be configured.")
+    if active_profile not in profiles:
+        raise ValueError(
+            f"Active driver input profile '{active_profile}' is not configured."
+        )
+    selected_profile = st.selectbox(
+        "Input device profile",
+        profile_names,
+        index=profile_names.index(active_profile),
+        key="driver_input_profile_selector",
+    )
+    if selected_profile != active_profile:
+        st.info(
+            f"{selected_profile} is selected but not active yet. "
+            "Open the threshold editor and save it to apply the profile."
+        )
+    profile = profiles[selected_profile]
+    with st.expander("Edit input thresholds", expanded=False):
+        st.caption(
+            "Changes are saved to config.local.yaml and apply immediately. "
+            "The load-cell profile starts with controller defaults; calibrate it "
+            "from your own telemetry before relying on its detections."
+        )
+        with st.form("driver_input_profile_form"):
+            brake_release_rate = st.number_input(
+                "Abrupt brake-release threshold (%/s)",
+                min_value=1.0,
+                value=float(profile["brake_release_slope_pct_s"]),
+                step=50.0,
+                key=f"{selected_profile}_brake_release_rate",
+            )
+            brake_release_speed = st.number_input(
+                "Minimum speed for abrupt-release flag (km/h)",
+                min_value=0.0,
+                value=float(profile["brake_release_min_speed_kmh"]),
+                step=5.0,
+                key=f"{selected_profile}_brake_release_speed",
+            )
+            throttle_snap_rate = st.number_input(
+                "Loaded throttle-snap threshold (%/s)",
+                min_value=1.0,
+                value=float(profile["throttle_snap_slope_pct_s"]),
+                step=50.0,
+                key=f"{selected_profile}_throttle_snap_rate",
+            )
+            loaded_steering_angle = st.number_input(
+                "Loaded-input steering threshold (deg)",
+                min_value=0.1,
+                value=float(profile["loaded_steering_angle_deg"]),
+                step=1.0,
+                key=f"{selected_profile}_loaded_steering_angle",
+            )
+            trail_steering_angle = st.number_input(
+                "Trail-brake steering threshold (deg)",
+                min_value=0.1,
+                value=float(profile["trail_brake_steering_angle_deg"]),
+                step=1.0,
+                key=f"{selected_profile}_trail_steering_angle",
+            )
+            submitted = st.form_submit_button("Save and apply profile")
+        if submitted:
+            updated_profiles = {
+                name: dict(values) for name, values in profiles.items()
+            }
+            updated_profiles[selected_profile].update(
+                {
+                    "brake_release_slope_pct_s": brake_release_rate,
+                    "brake_release_min_speed_kmh": brake_release_speed,
+                    "throttle_snap_slope_pct_s": throttle_snap_rate,
+                    "loaded_steering_angle_deg": loaded_steering_angle,
+                    "trail_brake_steering_angle_deg": trail_steering_angle,
+                }
+            )
+            try:
+                save_driver_input_settings(
+                    selected_profile,
+                    updated_profiles,
+                )
+            except (OSError, ValueError) as exc:
+                st.error(f"Could not save input profile: {exc}")
+            else:
+                st.success(
+                    f"{selected_profile} saved and applied. "
+                    "Other profiles were preserved."
+                )
 
 
 def _gg_figure(lap):
@@ -704,6 +798,7 @@ def main():
                 )
 
     with tabs[1]:
+        _render_driver_input_settings()
         input_config = load_track_config(clean_frame)
         input_lap = (
             st.selectbox(
@@ -732,7 +827,7 @@ def main():
             metrics = input_analysis["metrics"]
             st.caption(
                 f"Input device profile: {input_analysis['input_profile']}. "
-                "Thresholds can be calibrated in config.yaml."
+                "Edit the profile above to tune thresholds."
             )
             metric_labels = (
                 ("double_braking_m", "Double braking"),

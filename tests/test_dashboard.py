@@ -1,10 +1,14 @@
 import unittest
 from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from src import config
+from src.core.driver_inputs import driver_input_profile
 from src.visualization.dashboard import (
     _aero_sensor_summary,
     _gg_figure,
@@ -169,6 +173,14 @@ class DashboardTests(unittest.TestCase):
         app = AppTest.from_file(str(app_path)).run(timeout=120)
 
         self.assertEqual(len(app.exception), 0)
+        self.assertIn(
+            "Input device profile",
+            [selectbox.label for selectbox in app.selectbox],
+        )
+        self.assertIn(
+            "Abrupt brake-release threshold (%/s)",
+            [widget.label for widget in app.number_input],
+        )
         self.assertEqual(
             [tab.label for tab in app.tabs],
             [
@@ -184,6 +196,43 @@ class DashboardTests(unittest.TestCase):
                 "Tire analytics",
             ],
         )
+
+    def test_dashboard_saves_and_applies_input_profile_edits(self):
+        app_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "visualization"
+            / "dashboard.py"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            local_path = Path(directory) / "config.local.yaml"
+            with patch.object(config, "LOCAL_CONFIG_PATH", local_path):
+                config.load_config.cache_clear()
+                app = AppTest.from_file(str(app_path)).run(timeout=120)
+                app.selectbox[0].select("LOAD_CELL_WHEEL").run(timeout=120)
+                next(
+                    widget
+                    for widget in app.number_input
+                    if widget.label == "Loaded throttle-snap threshold (%/s)"
+                ).set_value(1250.0)
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "Save and apply profile"
+                ).click()
+                app.run(timeout=120)
+
+                self.assertEqual(len(app.exception), 0)
+                self.assertTrue(local_path.is_file())
+                self.assertEqual(
+                    config.config_value("driver_inputs", "active_profile"),
+                    "LOAD_CELL_WHEEL",
+                )
+                self.assertEqual(
+                    driver_input_profile()["throttle_snap_slope_pct_s"],
+                    1250.0,
+                )
+            config.load_config.cache_clear()
 
 
 if __name__ == "__main__":
