@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 
 from src.config import config_value
-from src.core.driver_inputs import auto_detect_apexes
+from src.core.driver_inputs import auto_detect_apexes, driver_input_profile
+from src.core.session_filters import classify_session_laps
+from src.core.tire_envelope import (
+    off_track_spike_mask,
+    polar_envelope_area,
+    sensor_unit_conversion,
+)
 from src.core.signal_rates import (
     native_sample_rate_hz,
     smoothed_derivative,
@@ -292,12 +298,9 @@ def brake_input_analysis(lap, sample_rate_hz=50.0):
     speed = _numeric(lap, "Ground Speed")
     distance = _numeric(lap, "Normalized_Dist")
     threshold = float(config_value("vehicle", "brake_input_threshold_pct"))
-    abrupt_limit = float(
-        config_value("vehicle", "abrupt_brake_release_pct_s")
-    )
-    abrupt_minimum_speed = float(
-        config_value("vehicle", "abrupt_brake_release_min_speed_kmh")
-    )
+    input_profile = driver_input_profile()
+    abrupt_limit = input_profile["brake_release_slope_pct_s"]
+    abrupt_minimum_speed = input_profile["brake_release_min_speed_kmh"]
     if not math.isfinite(threshold) or threshold < 0:
         raise ValueError("vehicle.brake_input_threshold_pct must be non-negative.")
     if not math.isfinite(abrupt_limit) or abrupt_limit <= 0:
@@ -453,12 +456,47 @@ def _sensor_columns(frame, tokens):
     ]
 
 
-def _lap_sensor_mean(lap, columns):
+def _tire_temperature_columns(frame):
+    columns = _sensor_columns(
+        frame,
+        ("tire temp core", "tyre temp core"),
+    )
     if not columns:
-        return None
-    values = lap[columns].apply(pd.to_numeric, errors="coerce")
-    finite = values.replace([np.inf, -np.inf], np.nan)
-    return float(finite.mean(axis=1).mean()) if finite.notna().any().any() else None
+        columns = _sensor_columns(
+            frame,
+            ("tire carcass temp", "tyre carcass temp"),
+        )
+    if not columns:
+        columns = _sensor_columns(frame, ("tire temp", "tyre temp"))
+    return columns
+
+
+def _lap_sensor_mean(lap, columns, sensor_kind, source_frame):
+    if not columns:
+        return None, False
+    converted = {}
+    assumed_units = False
+    for column in columns:
+        scale, offset, assumed = sensor_unit_conversion(
+            source_frame,
+            column,
+            sensor_kind,
+        )
+        if scale is None:
+            continue
+        values = pd.to_numeric(lap[column], errors="coerce")
+        converted[column] = values * scale + offset
+        assumed_units |= assumed
+    if not converted:
+        return None, assumed_units
+    finite = pd.DataFrame(converted, index=lap.index).replace(
+        [np.inf, -np.inf],
+        np.nan,
+    )
+    return (
+        float(finite.mean(axis=1).mean()) if finite.notna().any().any() else None,
+        assumed_units,
+    )
 
 
 def predictive_tire_degradation(
@@ -466,7 +504,7 @@ def predictive_tire_degradation(
     minimum_laps=None,
     lap_time_drop_threshold_s=None,
 ):
-    """Fit an interpretable linear stint trend and forecast a pace-loss threshold."""
+    """Forecast pace loss from peak grip, excluding sensor-confirmed warm-up laps."""
     minimum_laps = (
         int(config_value("tire_analysis", "degradation_minimum_laps"))
         if minimum_laps is None
@@ -483,23 +521,153 @@ def predictive_tire_degradation(
         raise ValueError("lap_time_drop_threshold_s must be positive and finite.")
 
     times = []
-    valid_laps = valid_lap_numbers(frame)
+    session_classification = classify_session_laps(frame)
+    lap_tags = session_classification["lap_tags"]
+    valid_laps = [
+        lap_number
+        for lap_number in valid_lap_numbers(frame)
+        if not lap_tags[float(lap_number)]["excluded_from_degradation"]
+    ]
+    excluded_laps = {
+        float(lap): tags["reasons"]
+        for lap, tags in lap_tags.items()
+        if tags["excluded_from_degradation"]
+    }
     for lap_number in valid_laps:
         lap = frame[frame["Lap Number"] == lap_number]
         duration = lap_time_seconds(lap)
         if math.isfinite(duration) and duration > 0:
             times.append((float(lap_number), duration, lap))
+    core_columns = _tire_temperature_columns(frame)
+    pressure_columns = _sensor_columns(
+        frame,
+        ("tire pressure", "tyre pressure"),
+    )
+    temperature_by_lap = {}
+    pressure_by_lap = {}
+    assumed_sensor_units = {"tire_core_temperature": False, "tire_pressure": False}
+    envelope_areas = {}
+    envelope_coverage = {}
+    off_track_spikes = {}
+    for lap_number, _, lap in times:
+        temperature, temp_assumed = _lap_sensor_mean(
+            lap,
+            core_columns,
+            "temperature",
+            frame,
+        )
+        pressure, pressure_assumed = _lap_sensor_mean(
+            lap,
+            pressure_columns,
+            "pressure",
+            frame,
+        )
+        temperature_by_lap[lap_number] = temperature
+        pressure_by_lap[lap_number] = pressure
+        assumed_sensor_units["tire_core_temperature"] |= temp_assumed
+        assumed_sensor_units["tire_pressure"] |= pressure_assumed
+        if {"G Force Lat", "G Force Long"}.issubset(lap.columns):
+            rejected_spikes = off_track_spike_mask(lap)
+            off_track_spikes[lap_number] = int(rejected_spikes.sum())
+            area, coverage = polar_envelope_area(
+                _numeric(lap, "G Force Lat")[~rejected_spikes],
+                _numeric(lap, "G Force Long")[~rejected_spikes],
+            )
+            if area is not None and area > 0:
+                envelope_areas[lap_number] = area
+                envelope_coverage[lap_number] = coverage
+
+    warmup_slopes = {"tire_core_temperature": {}, "tire_pressure": {}}
+    warmup_laps = set()
+    for index in range(1, len(times)):
+        previous_lap = times[index - 1][0]
+        current_lap = times[index][0]
+        lap_gap = current_lap - previous_lap
+        if lap_gap <= 0:
+            continue
+        for name, measurements, threshold in (
+            (
+                "tire_core_temperature",
+                temperature_by_lap,
+                3.0,
+            ),
+            ("tire_pressure", pressure_by_lap, 0.3),
+        ):
+            previous = measurements.get(previous_lap)
+            current = measurements.get(current_lap)
+            if previous is None or current is None:
+                continue
+            sensor_slope = (current - previous) / lap_gap
+            warmup_slopes[name][current_lap] = float(sensor_slope)
+            if sensor_slope > threshold:
+                warmup_laps.add(current_lap)
+
     result = {
         "available": False,
         "minimum_laps_required": minimum_laps,
         "lap_time_drop_threshold_s": drop_threshold,
         "lap_count": len(times),
-        "fit_method": "least-squares linear trend against stint lap number",
+        "complete_lap_count": len(lap_tags),
+        "excluded_laps": excluded_laps,
+        "fit_method": (
+            "least-squares linear trend from the sensor-gated peak-grip lap "
+            "through the remaining stint laps"
+        ),
+        "grip_envelope_area_g2_by_lap": {
+            str(lap): float(area) for lap, area in envelope_areas.items()
+        },
+        "grip_envelope_wedge_coverage_by_lap": {
+            str(lap): int(coverage)
+            for lap, coverage in envelope_coverage.items()
+        },
+        "off_track_spike_samples_excluded_by_lap": {
+            str(lap): count for lap, count in off_track_spikes.items()
+        },
+        "warmup_excluded_laps": sorted(float(lap) for lap in warmup_laps),
+        "sensor_warmup_slopes_per_lap": {
+            name: {
+                float(lap): float(value)
+                for lap, value in slopes.items()
+            }
+            for name, slopes in warmup_slopes.items()
+        },
+        "sensor_units_assumed": assumed_sensor_units,
         "caveat": (
             "A lap-time trend is a correlation-based pace forecast, not proof "
             "that tire degradation caused the change."
         ),
     }
+    peak_candidates = [
+        item
+        for item in times
+        if item[0] in envelope_areas and item[0] not in warmup_laps
+    ]
+    if peak_candidates:
+        peak_grip_lap = max(
+            (item[0] for item in peak_candidates),
+            key=envelope_areas.get,
+        )
+        peak_index = next(
+            index for index, item in enumerate(times) if item[0] == peak_grip_lap
+        )
+        regression_items = [
+            item
+            for item in times[peak_index:]
+            if item[0] not in warmup_laps
+        ]
+        result["peak_grip_lap"] = float(peak_grip_lap)
+        result["peak_grip_envelope_area_g2"] = float(
+            envelope_areas[peak_grip_lap]
+        )
+        result["regression_laps"] = [
+            float(item[0]) for item in regression_items
+        ]
+        result["laps_without_grip_envelope"] = [
+            float(item[0]) for item in times if item[0] not in envelope_areas
+        ]
+    else:
+        regression_items = []
+
     if len(times) < minimum_laps:
         result["unavailable"] = (
             f"At least {minimum_laps} complete laps are required; "
@@ -507,9 +675,28 @@ def predictive_tire_degradation(
         )
         return result
 
-    lap_numbers = np.array([item[0] for item in times], dtype=float)
-    lap_seconds = np.array([item[1] for item in times], dtype=float)
-    baseline_count = min(3, len(times))
+    if not envelope_areas:
+        result["unavailable"] = (
+            "Complete-lap lateral and longitudinal G data are required to "
+            "identify the peak-grip lap."
+        )
+        return result
+    if not peak_candidates:
+        result["unavailable"] = (
+            "No complete lap has both a usable G-G envelope and stable tire "
+            "temperature/pressure for peak-grip selection."
+        )
+        return result
+    if len(regression_items) < 3:
+        result["unavailable"] = (
+            "At least 3 usable laps from the peak-grip point onward are required "
+            "for a stable pace trend."
+        )
+        return result
+
+    lap_numbers = np.array([item[0] for item in regression_items], dtype=float)
+    lap_seconds = np.array([item[1] for item in regression_items], dtype=float)
+    baseline_count = min(3, len(regression_items))
     baseline_time = float(np.median(lap_seconds[:baseline_count]))
     slope, intercept = np.polyfit(lap_numbers, lap_seconds, 1)
     fitted = slope * lap_numbers + intercept
@@ -520,26 +707,6 @@ def predictive_tire_degradation(
         if total_sum > 0
         else 1.0
     )
-
-    core_columns = _sensor_columns(
-        frame,
-        ("tire temp core", "tyre temp core"),
-    )
-    if not core_columns:
-        core_columns = _sensor_columns(
-            frame,
-            ("tire carcass temp", "tyre carcass temp"),
-        )
-    pressure_columns = _sensor_columns(
-        frame,
-        ("tire pressure", "tyre pressure"),
-    )
-    temperature_by_lap = [
-        _lap_sensor_mean(item[2], core_columns) for item in times
-    ]
-    pressure_by_lap = [
-        _lap_sensor_mean(item[2], pressure_columns) for item in times
-    ]
 
     result.update(
         {
@@ -552,19 +719,23 @@ def predictive_tire_degradation(
                 str(lap): float(seconds)
                 for lap, seconds in zip(lap_numbers, lap_seconds)
             },
+            "all_lap_times_seconds": {
+                str(lap): float(seconds)
+                for lap, seconds, _ in times
+            },
             "fitted_lap_times_seconds": {
                 str(lap): float(value)
                 for lap, value in zip(lap_numbers, fitted)
             },
             "tire_core_temperature_mean_by_lap": {
-                str(lap): value
-                for (lap, _, _), value in zip(times, temperature_by_lap)
-                if value is not None
+                str(lap): temperature_by_lap[lap]
+                for lap, _, _ in regression_items
+                if temperature_by_lap[lap] is not None
             },
             "tire_pressure_mean_by_lap": {
-                str(lap): value
-                for (lap, _, _), value in zip(times, pressure_by_lap)
-                if value is not None
+                str(lap): pressure_by_lap[lap]
+                for lap, _, _ in regression_items
+                if pressure_by_lap[lap] is not None
             },
             "sensor_trend_slopes_per_lap": {},
         }
@@ -574,9 +745,10 @@ def predictive_tire_degradation(
         ("tire_pressure", pressure_by_lap),
     ):
         valid = [
-            (lap, measurement)
-            for (lap, _, _), measurement in zip(times, measurements)
-            if measurement is not None and math.isfinite(measurement)
+            (lap, measurements.get(lap))
+            for lap in lap_numbers
+            if measurements.get(lap) is not None
+            and math.isfinite(measurements[lap])
         ]
         if len(valid) >= 3:
             sensor_slope, _ = np.polyfit(

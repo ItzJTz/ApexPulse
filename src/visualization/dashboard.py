@@ -470,6 +470,30 @@ def main():
         clean_frame,
         count=max(2, clean_frame["Lap Number"].nunique()),
     )
+    lap_tags = quality["laps"].get("tags", {})
+
+    def format_lap_option(lap):
+        labels = []
+        tags = lap_tags.get(str(float(lap)), {})
+        if tags.get("launch_lap"):
+            labels.append("Launch Lap")
+        if tags.get("slow_lap"):
+            labels.append("slow lap")
+        if tags.get("pit_limiter"):
+            labels.append("pit limiter")
+        if tags.get("incident"):
+            labels.append("incident")
+        suffix = f" ({', '.join(labels)})" if labels else ""
+        return f"Lap {lap:g}{suffix}"
+
+    representative_laps = [
+        lap
+        for lap in lap_options
+        if not lap_tags.get(str(float(lap)), {}).get(
+            "excluded_from_baselines",
+            False,
+        )
+    ] or lap_options
     track_names = (
         clean_frame["Track"].dropna().astype(str).unique()
         if "Track" in clean_frame
@@ -482,9 +506,9 @@ def main():
         f"{reference_target_seconds % 60:06.3f}"
     )
     with st.sidebar:
-        if len(lap_options) >= 2:
+        if len(representative_laps) >= 2:
             default_a = min(
-                lap_options,
+                representative_laps,
                 key=lambda lap: abs(
                     lap_time_seconds(
                         clean_frame[clean_frame["Lap Number"] == lap]
@@ -492,24 +516,32 @@ def main():
                     - reference_target_seconds
                 ),
             )
-            default_b = next(lap for lap in lap_options if lap != lap_options[0])
+            default_b = next(
+                lap
+                for lap in representative_laps
+                if lap != representative_laps[0]
+            )
             if default_b == default_a:
-                default_b = next(lap for lap in lap_options if lap != default_a)
+                default_b = next(
+                    lap for lap in representative_laps if lap != default_a
+                )
             lap_a = st.selectbox(
                 "Reference lap",
-                lap_options,
-                index=lap_options.index(default_a),
-                format_func=lambda value: f"Lap {value:g}",
+                representative_laps,
+                index=representative_laps.index(default_a),
+                format_func=format_lap_option,
             )
-            lap_b_options = [lap for lap in lap_options if lap != lap_a]
+            lap_b_options = [
+                lap for lap in representative_laps if lap != lap_a
+            ]
             lap_b = st.selectbox(
                 "Compared lap",
                 lap_b_options,
                 index=lap_b_options.index(default_b) if default_b in lap_b_options else 0,
-                format_func=lambda value: f"Lap {value:g}",
+                format_func=format_lap_option,
             )
         else:
-            lap_a = lap_options[0] if lap_options else None
+            lap_a = representative_laps[0] if representative_laps else None
             lap_b = None
 
     track_label = quality.get("track") or "Track not identified"
@@ -678,7 +710,7 @@ def main():
                 "Analyze input events on lap",
                 lap_options,
                 index=lap_options.index(lap_a) if lap_a in lap_options else 0,
-                format_func=lambda value: f"Lap {value:g}",
+                format_func=format_lap_option,
             )
             if lap_options
             else None
@@ -698,6 +730,10 @@ def main():
             st.info("Select at least two complete laps to compare driver inputs.")
         if input_analysis is not None:
             metrics = input_analysis["metrics"]
+            st.caption(
+                f"Input device profile: {input_analysis['input_profile']}. "
+                "Thresholds can be calibrated in config.yaml."
+            )
             metric_labels = (
                 ("double_braking_m", "Double braking"),
                 ("abrupt_brake_release_m", "Abrupt brake releases"),
@@ -706,6 +742,7 @@ def main():
                 ("throttle_hesitations_m", "Throttle hesitations"),
                 ("dead_coasting_sec", "Dead coasting"),
                 ("loaded_downshifts_m", "Loaded downshifts"),
+                ("traffic_lifts_m", "Traffic / Lift"),
             )
             metric_columns = st.columns(4)
             for index, (key, label) in enumerate(metric_labels):
@@ -728,13 +765,32 @@ def main():
                     help=help_text,
                 )
 
+            if input_analysis.get("excluded_reason"):
+                st.warning(
+                    "Driver-input analysis excluded for this non-representative lap: "
+                    f"{input_analysis['excluded_reason']}."
+                )
+            if input_analysis.get("neutralized_zones"):
+                st.caption(
+                    "Mistake detection was suspended in "
+                    f"{len(input_analysis['neutralized_zones'])} yellow/slow-zone "
+                    "interval(s)."
+                )
+
             if input_analysis["events"]:
                 st.subheader("Detected input events")
                 st.dataframe(
                     pd.DataFrame(
                         [
                             {
-                                "Detector": event["detector"].replace("_m", "").replace("_", " ").title(),
+                                "Detector": (
+                                    "Traffic / Lift"
+                                    if event["detector"] == "traffic_lifts_m"
+                                    else event["detector"]
+                                    .replace("_m", "")
+                                    .replace("_", " ")
+                                    .title()
+                                ),
                                 "Distance (m)": round(event["distance_m"], 1),
                                 "Cluster range (m)": (
                                     f"{event['start_m']:.1f}-{event['end_m']:.1f}"
@@ -770,10 +826,11 @@ def main():
                     width="stretch",
                 )
             else:
-                st.info(
-                    "No input mistakes crossed the configured thresholds on this lap. "
-                    "The trail-brake ratio and dead-coasting time still summarize available channels."
-                )
+                if not input_analysis.get("excluded_reason"):
+                    st.info(
+                        "No input mistakes crossed the configured thresholds on this lap. "
+                        "The trail-brake ratio and dead-coasting time still summarize available channels."
+                    )
             if input_analysis["auto_detected_corners"] and not (
                 input_config and input_config.get("corner_metadata")
             ):
@@ -1168,21 +1225,29 @@ def main():
                     )
 
     with tabs[6]:
+        race_tags = quality["laps"].get("tags", {})
+        excluded_laps = {
+            float(lap)
+            for lap, tags in race_tags.items()
+            if tags.get("excluded_from_baselines")
+        }
+        excluded_laps.update(
+            quality["laps"]["excluded_incomplete"]
+            + quality["laps"].get("excluded_overlength", [])
+            + quality["laps"].get("excluded_bad_start", [])
+        )
         rows = st.columns(4)
         rows[0].metric("Input rows", f"{quality['rows']['source']:,}")
         rows[1].metric("Invalid required rows", f"{quality['rows']['invalid_required_data']:,}")
         rows[2].metric("Repeated-distance samples retained", f"{quality['rows']['repeated_distance_samples']:,}")
         rows[3].metric(
-            "Laps excluded",
-            str(
-                len(quality["laps"]["excluded_incomplete"])
-                + len(quality["laps"].get("excluded_overlength", []))
-                + len(quality["laps"].get("excluded_bad_start", []))
-            ),
+            "Laps excluded from baselines",
+            str(len(excluded_laps)),
         )
         st.subheader("Lap coverage")
         overlength_laps = quality["laps"].get("excluded_overlength", [])
         bad_start_laps = quality["laps"].get("excluded_bad_start", [])
+        lap_environment = quality["laps"].get("environment_by_lap", {})
         st.dataframe(
             pd.DataFrame(
                 [
@@ -1192,6 +1257,21 @@ def main():
                         "Start distance (m)": quality["laps"].get(
                             "start_distance_m", {}
                         ).get(str(lap)),
+                        "Race tags": ", ".join(
+                            quality["laps"].get("tags", {})
+                            .get(str(float(lap)), {})
+                            .get("reasons", [])
+                        )
+                        or "representative",
+                        "Fuel bucket": lap_environment.get(
+                            str(float(lap)), {}
+                        ).get("fuel_bucket"),
+                        "Surface grip (%)": lap_environment.get(
+                            str(float(lap)), {}
+                        ).get("surface_grip_mean_pct"),
+                        "Road temp (°C)": lap_environment.get(
+                            str(float(lap)), {}
+                        ).get("road_temperature_mean_c"),
                         "Status": (
                             "Included"
                             if float(lap) in quality["laps"]["complete"]
@@ -1207,6 +1287,11 @@ def main():
             ),
             hide_index=True,
             width="stretch",
+        )
+        st.caption(
+            "Fuel buckets are based on lap-average fuel (<15 L, 15–35 L, >35 L). "
+            "Compare G-G grip across sessions only after checking surface grip "
+            "and road temperature."
         )
         missing_channels = quality["channels"]["optional_missing_percent"]
         if missing_channels:
@@ -1500,8 +1585,18 @@ def main():
         st.subheader("Stint degradation forecast")
         if not degradation["available"]:
             st.info(degradation["unavailable"])
+            if "peak_grip_lap" in degradation:
+                st.metric(
+                    "Peak-grip lap",
+                    f"{degradation['peak_grip_lap']:g}",
+                )
+                st.caption(
+                    "Peak grip is measured from the 95th-percentile polar G-G "
+                    "envelope. Pace regression needs at least "
+                    f"{degradation['minimum_laps_required']} complete laps."
+                )
         else:
-            degradation_metrics = st.columns(3)
+            degradation_metrics = st.columns(4)
             degradation_metrics[0].metric(
                 "Lap-time trend",
                 f"{degradation['lap_time_slope_s_per_lap']:+.3f} s/lap",
@@ -1515,6 +1610,10 @@ def main():
                 "No positive trend"
                 if degradation["predicted_threshold_lap"] is None
                 else str(degradation["predicted_threshold_lap"]),
+            )
+            degradation_metrics[3].metric(
+                "Peak-grip lap",
+                f"{degradation['peak_grip_lap']:g}",
             )
             trend_frame = pd.DataFrame(
                 [
@@ -1541,7 +1640,11 @@ def main():
             st.caption(
                 f"Forecast target is baseline pace + "
                 f"{degradation['lap_time_drop_threshold_s']:.2f} s; "
-                f"baseline uses the first three complete laps. "
+                f"baseline uses the first three retained laps from peak grip. "
+                f"Sensor warm-up laps excluded: "
+                f"{', '.join(f'{lap:g}' for lap in degradation['warmup_excluded_laps']) or 'none'}. "
+                "Warm-up gates are >3.0 °C/lap core-temperature rise or "
+                ">0.3 psi/lap pressure rise when those channels are available. "
                 f"{degradation['caveat']}"
             )
             if degradation["sensor_trend_slopes_per_lap"]:
@@ -1569,13 +1672,28 @@ def main():
                     f"Lap {area_comparison['compare_lap']:g}"
                 ),
                 f"{area_comparison['change_percent']:+.1f}%",
-                help="Positive indicates a larger measured per-lap superellipse area; negative indicates a smaller area. Area change alone does not establish tire degradation.",
+                help=(
+                    "Area uses a 95th-percentile radial envelope in 36 angular "
+                    "wedges. Positive means a larger measured G-G envelope; "
+                    "this alone does not establish tire degradation."
+                ),
             )
         if tire["friction_circle_area_g2_by_lap"]:
             area_frame = pd.DataFrame(
                 [
-                    {"Lap": lap, "Envelope area (G²)": area}
-                    for lap, area in tire["friction_circle_area_g2_by_lap"].items()
+                    {
+                        "Lap": lap,
+                        "Envelope area (G²)": area,
+                        "Populated angle wedges": tire[
+                            "friction_circle_wedge_coverage_by_lap"
+                        ][lap],
+                        "Off-track G spikes rejected": tire[
+                            "off_track_spike_samples_excluded_by_lap"
+                        ].get(lap, 0),
+                    }
+                    for lap, area in tire[
+                        "friction_circle_area_g2_by_lap"
+                    ].items()
                 ]
             )
             st.plotly_chart(
@@ -1584,10 +1702,30 @@ def main():
                     x="Lap",
                     y="Envelope area (G²)",
                     markers=True,
-                    title="Observed per-lap G-G superellipse area",
+                    title="Observed per-lap 95th-percentile polar G-G envelope",
                 ),
                 width="stretch",
             )
+        pressure_by_lap = tire["tire_pressure_mean_psi_by_lap"]
+        if pressure_by_lap:
+            pressure_frame = pd.DataFrame(
+                [
+                    {"Lap": lap, **wheel_values}
+                    for lap, wheel_values in pressure_by_lap.items()
+                ]
+            ).sort_values("Lap")
+            st.subheader("Tire pressure by wheel")
+            st.dataframe(pressure_frame, hide_index=True, width="stretch")
+            hot_pressure_laps = tire["wheels_above_27_5_psi_by_lap"]
+            if any(hot_pressure_laps.values()):
+                st.warning(
+                    "At least one tire exceeded 27.5 psi; review thermal pressure "
+                    "as a possible contributor before attributing grip loss to wear."
+                )
+            if tire["tire_pressure_units_assumed"]:
+                st.caption(
+                    "Pressure units were not supplied; values were assumed to be psi."
+                )
         if tire["tire_work_integral_by_lap"]:
             work_frame = pd.DataFrame(
                 [

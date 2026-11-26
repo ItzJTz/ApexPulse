@@ -1,27 +1,44 @@
+import re
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import trapezoid
-from scipy.special import gamma
 
 from src.config import config_value
+from src.core.tire_envelope import (
+    POLAR_ENVELOPE_PERCENTILE,
+    POLAR_ENVELOPE_WEDGES,
+    off_track_spike_mask,
+    polar_envelope_area,
+    sensor_unit_conversion,
+)
+from src.core.session_filters import classify_session_laps
 from src.pipeline.telemetry_io import (
     fastest_lap_numbers,
     load_telemetry,
     process_session,
+    valid_lap_numbers,
 )
 from src.visualization.style import apply_style
 
 
 def tire_metrics(frame):
     """Summarize optional tire signals and measured per-lap G-G envelopes."""
-    exponent = float(config_value("tire_analysis", "friction_circle_exponent"))
-    if not np.isfinite(exponent) or exponent <= 0:
-        raise ValueError("tire_analysis.friction_circle_exponent must be positive and finite.")
     areas = {}
+    wedge_coverage = {}
+    off_track_spikes = {}
     work = {}
     thermal = None
     unavailable = {}
+    pressure_by_lap = {}
+    pressure_units_assumed = False
+    lap_tags = classify_session_laps(frame)["lap_tags"]
+    representative_laps = [
+        lap_number
+        for lap_number in valid_lap_numbers(frame)
+        if not lap_tags[float(lap_number)]["excluded_from_baselines"]
+    ]
 
     required_temperature = {"Tire Temp Inner", "Tire Temp Outer"}
     if required_temperature.issubset(frame.columns):
@@ -49,38 +66,65 @@ def tire_metrics(frame):
         )
 
     if {"G Force Lat", "G Force Long"}.issubset(frame.columns):
-        for lap_number, lap in frame.groupby("Lap Number", sort=True):
+        for lap_number in representative_laps:
+            lap = frame[frame["Lap Number"] == lap_number]
             lateral = pd.to_numeric(lap["G Force Lat"], errors="coerce").to_numpy(
                 dtype=float
             )
             longitudinal = pd.to_numeric(
                 lap["G Force Long"], errors="coerce"
             ).to_numpy(dtype=float)
-            finite = np.isfinite(lateral) & np.isfinite(longitudinal)
-            lateral = lateral[finite]
-            longitudinal = longitudinal[finite]
-            if len(lateral) < 3:
-                continue
-            lateral_radius = float(np.max(np.abs(lateral)))
-            accel_radius = float(np.quantile(longitudinal, 0.99))
-            brake_radius = float(abs(np.min(longitudinal)))
-            if min(lateral_radius, accel_radius, brake_radius) <= 0:
-                continue
-            gamma_factor = gamma(1 + 1 / exponent) ** 2 / gamma(1 + 2 / exponent)
-            areas[float(lap_number)] = float(
-                2
-                * lateral_radius
-                * (accel_radius + brake_radius)
-                * gamma_factor
+            rejected_spikes = off_track_spike_mask(lap)
+            off_track_spikes[float(lap_number)] = int(rejected_spikes.sum())
+            area, coverage = polar_envelope_area(
+                lateral[~rejected_spikes],
+                longitudinal[~rejected_spikes],
             )
+            if area is not None and area > 0:
+                areas[float(lap_number)] = float(area)
+                wedge_coverage[float(lap_number)] = coverage
     else:
         unavailable["friction_circle_area"] = (
             "Lateral and longitudinal G channels are required."
         )
 
+    pressure_columns = [
+        column
+        for column in frame.columns
+        if "tire pressure" in str(column).casefold()
+        or "tyre pressure" in str(column).casefold()
+    ]
+    for lap_number in representative_laps:
+        lap = frame[frame["Lap Number"] == lap_number]
+        wheel_values = {}
+        for column in pressure_columns:
+            scale, offset, assumed = sensor_unit_conversion(
+                frame,
+                column,
+                "pressure",
+            )
+            if scale is None:
+                continue
+            values = pd.to_numeric(lap[column], errors="coerce")
+            values = values.replace([np.inf, -np.inf], np.nan).dropna()
+            if not len(values):
+                continue
+            normalized_name = re.sub(
+                r"[^a-z0-9]",
+                "",
+                str(column).casefold(),
+            )
+            wheel_match = re.search(r"(fl|fr|rl|rr)$", normalized_name)
+            wheel = wheel_match.group(1).upper() if wheel_match else "Average"
+            wheel_values[wheel] = float((values * scale + offset).mean())
+            pressure_units_assumed |= assumed
+        if wheel_values:
+            pressure_by_lap[float(lap_number)] = wheel_values
+
     required_work = {"Steering", "Ground Speed", "G Force Lat", "Lap Distance"}
     if required_work.issubset(frame.columns):
-        for lap_number, lap in frame.groupby("Lap Number", sort=True):
+        for lap_number in representative_laps:
+            lap = frame[frame["Lap Number"] == lap_number]
             values = pd.DataFrame(
                 {
                     "distance": pd.to_numeric(
@@ -133,7 +177,7 @@ def tire_metrics(frame):
         configured_baseline = config_value("tire_analysis", "baseline_lap")
         configured_compare = config_value("tire_analysis", "compare_lap")
         baseline_lap = (
-            available_laps[0]
+            max(available_laps, key=areas.get)
             if configured_baseline is None
             else float(configured_baseline)
         )
@@ -173,7 +217,23 @@ def tire_metrics(frame):
         )
     return {
         "friction_circle_area_g2_by_lap": areas,
+        "friction_circle_wedge_coverage_by_lap": wedge_coverage,
+        "off_track_spike_samples_excluded_by_lap": off_track_spikes,
+        "friction_circle_area_method": (
+            f"{POLAR_ENVELOPE_PERCENTILE:g}th-percentile radial envelope "
+            f"across {POLAR_ENVELOPE_WEDGES} angular wedges"
+        ),
         "friction_circle_area_comparison": area_comparison,
+        "tire_pressure_mean_psi_by_lap": pressure_by_lap,
+        "tire_pressure_units_assumed": pressure_units_assumed,
+        "wheels_above_27_5_psi_by_lap": {
+            lap: [
+                wheel
+                for wheel, pressure in values.items()
+                if pressure > 27.5
+            ]
+            for lap, values in pressure_by_lap.items()
+        },
         "tire_work_integral_by_lap": work,
         "thermal_gradient": thermal,
         "unavailable": unavailable,

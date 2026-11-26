@@ -799,6 +799,15 @@ def process_session(
         ).median()
     )
     filter_report = _filter_noise_channels(result)
+    from src.core.session_filters import (
+        classify_session_laps,
+        lap_environment_summary,
+    )
+
+    race_state = classify_session_laps(result)
+    environment_by_lap = lap_environment_summary(result)
+    quality["race_state"] = race_state
+    quality["environment_by_lap"] = environment_by_lap
     result.attrs["quality"] = quality
     fastest_laps = fastest_lap_numbers(result, count=2)
     report = {
@@ -869,6 +878,22 @@ def process_session(
             }
             for lap in fastest_laps
         ],
+    }
+    report["laps"]["tags"] = {
+        str(lap): tags for lap, tags in race_state["lap_tags"].items()
+    }
+    report["laps"]["environment_by_lap"] = {
+        str(lap): values for lap, values in environment_by_lap.items()
+    }
+    report["race_state"] = {
+        "median_complete_lap_seconds": race_state[
+            "median_complete_lap_seconds"
+        ],
+        "excluded_laps": {
+            str(lap): tags["reasons"]
+            for lap, tags in race_state["lap_tags"].items()
+            if tags["reasons"]
+        },
     }
     report["source_file"] = report["source_file"] or "in-memory telemetry"
     return result.reset_index(drop=True), report

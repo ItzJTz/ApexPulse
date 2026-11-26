@@ -220,18 +220,32 @@ class VehicleDynamicsTests(unittest.TestCase):
     def test_degradation_forecast_requires_fifteen_laps_and_fits_trend(self):
         rows = []
         for lap_number in range(1, 16):
-            for distance in (0, 500, 1000):
-                rows.append(
-                    {
-                        "Lap Number": lap_number,
-                        "Normalized_Dist": distance,
-                        "Ground Speed": 100,
-                        "Lap Time": 100 + lap_number / 10,
-                        "Tire Temp Core FL": 80 + lap_number,
-                        "Tire Pressure FL": 25 + lap_number / 10,
-                    }
-                )
+            grip_radius = 1.1 if lap_number == 2 else 1.0
+            for wedge in range(36):
+                angle = np.deg2rad(-175 + wedge * 10)
+                for sample in range(3):
+                    distance = wedge * 30 + sample * 10
+                    core_temp = 80 + (4 if lap_number >= 3 else 0)
+                    pressure_kpa = 172.4 + (3 if lap_number >= 3 else 0)
+                    rows.append(
+                        {
+                            "Lap Number": lap_number,
+                            "Normalized_Dist": distance,
+                            "Ground Speed": 100,
+                            "Lap Time": 100 + lap_number / 5,
+                            "Tire Temp Core FL": core_temp * 9 / 5 + 32,
+                            "Tire Pressure FL": pressure_kpa,
+                            "G Force Lat": np.sin(angle) * grip_radius,
+                            "G Force Long": np.cos(angle) * grip_radius,
+                        }
+                    )
         frame = pd.DataFrame(rows)
+        frame.attrs["quality"] = {
+            "channel_units": {
+                "Tire Temp Core FL": "degF",
+                "Tire Pressure FL": "kPa",
+            }
+        }
 
         result = predictive_tire_degradation(frame)
         short_result = predictive_tire_degradation(
@@ -240,10 +254,22 @@ class VehicleDynamicsTests(unittest.TestCase):
 
         self.assertTrue(result["available"])
         self.assertEqual(result["lap_count"], 15)
-        self.assertAlmostEqual(result["lap_time_slope_s_per_lap"], 0.1)
-        self.assertEqual(result["predicted_threshold_lap"], 7)
+        self.assertEqual(result["peak_grip_lap"], 2.0)
+        self.assertEqual(result["warmup_excluded_laps"], [3.0])
+        self.assertEqual(result["regression_laps"][0], 2.0)
+        self.assertNotIn(3.0, result["regression_laps"])
+        self.assertAlmostEqual(result["lap_time_slope_s_per_lap"], 0.2)
+        self.assertAlmostEqual(
+            result["sensor_warmup_slopes_per_lap"]["tire_core_temperature"][3.0],
+            4.0,
+        )
+        self.assertAlmostEqual(
+            result["sensor_warmup_slopes_per_lap"]["tire_pressure"][3.0],
+            3 * 0.1450377377,
+        )
         self.assertIn("tire_core_temperature", result["sensor_trend_slopes_per_lap"])
         self.assertFalse(short_result["available"])
+        self.assertEqual(short_result["peak_grip_lap"], 2.0)
         self.assertIn("At least 15 complete laps", short_result["unavailable"])
 
     def test_vehicle_summary_is_json_friendly_when_optional_channels_are_missing(self):

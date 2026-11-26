@@ -1,10 +1,12 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
+from src.core import driver_inputs
 from src.core.analysis import corner_delta_breakdown
 from src.core.driver_inputs import (
     analyze_driver_inputs,
@@ -17,6 +19,43 @@ from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class DriverInputTests(unittest.TestCase):
+    def test_device_profile_selects_pedal_and_steering_thresholds(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * 8,
+                    "Lap Distance": np.arange(8, dtype=float),
+                    "Ground Speed": [100] * 8,
+                    "Time": np.arange(8, dtype=float) / 50,
+                    "Throttle Pos": [0, 0, 20, 20, 20, 20, 20, 20],
+                    "Brake Pos": [0] * 8,
+                    "Steering": [0, 0, 25, 25, 25, 25, 25, 25],
+                    "Gear": [4] * 8,
+                }
+            )
+        )
+        load_cell_profile = {
+            "brake_release_slope_pct_s": 600,
+            "brake_release_min_speed_kmh": 60,
+            "throttle_snap_slope_pct_s": 1200,
+            "loaded_steering_angle_deg": 30,
+            "trail_brake_steering_angle_deg": 15,
+        }
+
+        with patch.object(
+            driver_inputs,
+            "config_value",
+            side_effect=lambda section, key: (
+                "LOAD_CELL_WHEEL"
+                if key == "active_profile"
+                else {"LOAD_CELL_WHEEL": load_cell_profile}
+            ),
+        ):
+            result = analyze_driver_inputs(frame, 1)
+
+        self.assertEqual(result["input_profile"], "LOAD_CELL_WHEEL")
+        self.assertEqual(result["metrics"]["loaded_throttle_snaps_m"], [])
+
     def test_detects_driver_input_events_and_clusters_nearby_triggers(self):
         count = 500
         distance = np.arange(count, dtype=float) * 2
@@ -366,6 +405,120 @@ class DriverInputTests(unittest.TestCase):
         ]
         self.assertEqual(len(snap_events), 1)
         self.assertEqual(snap_events[0]["sample_index"], 14)
+
+    def test_traffic_lift_is_reported_separately_from_double_braking(self):
+        count = 1000
+        rows = []
+        for lap_number in (1, 2):
+            brake = np.zeros(count)
+            brake[450] = 30 if lap_number == 1 else 80
+            for index in range(count):
+                rows.append(
+                    {
+                        "Lap Number": lap_number,
+                        "Lap Distance": float(index),
+                        "Normalized_Dist": float(index),
+                        "Ground Speed": 100.0,
+                        "Time": index / 50,
+                        "Brake Pos": brake[index],
+                        "Throttle Pos": 0.0,
+                        "Steering": 0.0,
+                    }
+                )
+        frame = pd.DataFrame(rows)
+        track_config = {
+            "circuit_name": "Test Circuit",
+            "total_length_m": 1000,
+            "corner_metadata": [
+                {
+                    "id": "T1",
+                    "name": "Test corner",
+                    "start_m": 300,
+                    "apex_m": 500,
+                    "end_m": 600,
+                }
+            ],
+        }
+
+        result = analyze_driver_inputs(frame, 1, track_config)
+
+        self.assertEqual(result["metrics"]["traffic_lifts_m"], [450.0])
+        self.assertEqual(result["metrics"]["double_braking_m"], [])
+        self.assertEqual(result["raw_events"][0]["classification"], "Traffic / Lift")
+        self.assertFalse(result["raw_events"][0]["mistake"])
+
+    def test_traffic_reference_is_limited_to_the_same_fuel_bucket(self):
+        count = 1000
+        rows = []
+        for lap_number, brake_value, fuel_liters in (
+            (1, 30, 10),
+            (2, 80, 40),
+        ):
+            for index in range(count):
+                rows.append(
+                    {
+                        "Lap Number": lap_number,
+                        "Lap Distance": float(index),
+                        "Normalized_Dist": float(index),
+                        "Ground Speed": 100.0,
+                        "Time": index / 50,
+                        "Brake Pos": brake_value if index == 450 else 0,
+                        "Throttle Pos": 0.0,
+                        "Steering": 0.0,
+                        "Fuel Level": fuel_liters,
+                    }
+                )
+        frame = pd.DataFrame(rows)
+        track_config = {
+            "circuit_name": "Test Circuit",
+            "total_length_m": 1000,
+            "corner_metadata": [
+                {
+                    "id": "T1",
+                    "name": "Test corner",
+                    "start_m": 300,
+                    "apex_m": 500,
+                    "end_m": 600,
+                }
+            ],
+        }
+
+        result = analyze_driver_inputs(frame, 1, track_config)
+
+        self.assertIsNone(result["reference_lap"])
+        self.assertIsNone(result["metrics"]["traffic_lifts_m"])
+
+    def test_race_flag_suspends_dead_coasting_and_reports_the_slow_zone(self):
+        count = 1000
+        rows = []
+        for lap_number in (1, 2):
+            for index in range(count):
+                rows.append(
+                    {
+                        "Lap Number": lap_number,
+                        "Lap Distance": float(index),
+                        "Normalized_Dist": float(index),
+                        "Ground Speed": 100.0,
+                        "Time": index / 50,
+                        "Throttle Pos": 0.0,
+                        "Brake Pos": 0.0,
+                        "Steering": 0.0,
+                        "Race Flag": (
+                            "yellow" if lap_number == 1 and 400 <= index < 600
+                            else "green"
+                        ),
+                    }
+                )
+        frame = pd.DataFrame(rows)
+
+        result = analyze_driver_inputs(frame, 1)
+
+        self.assertEqual(len(result["neutralized_zones"]), 1)
+        self.assertEqual(
+            result["neutralized_zones"][0]["reason"],
+            "race flag indicates caution or a slow zone",
+        )
+        self.assertLess(result["metrics"]["dead_coasting_sec"], 20.0)
 
     def test_corner_delta_breakdown_ranks_time_loss_against_reference_trace(self):
         frame = prepare_telemetry_frame(

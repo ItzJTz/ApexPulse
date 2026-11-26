@@ -6,15 +6,79 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
+from src.config import config_value
+
 from src.core.signal_rates import (
     native_sample_rate_hz,
     smoothed_derivative,
 )
-from src.core.sector_analysis import scale_track_config_to_distance
+from src.core.session_filters import (
+    classify_session_laps,
+    lap_environment_summary,
+    lap_is_excluded,
+)
+from src.core.sector_analysis import (
+    _sector_time,
+    scale_track_config_to_distance,
+)
+from src.pipeline.telemetry_io import lap_time_seconds, valid_lap_numbers
 
 
 DEFAULT_SAMPLE_RATE_HZ = 50.0
 EVENT_CLUSTER_DISTANCE_M = 40.0
+
+
+def driver_input_profile():
+    """Return validated device-specific pedal and steering thresholds."""
+    profile_name = config_value("driver_inputs", "active_profile")
+    profiles = config_value("driver_inputs", "profiles")
+    if not isinstance(profile_name, str) or not isinstance(profiles, dict):
+        raise ValueError(
+            "driver_inputs.active_profile and driver_inputs.profiles "
+            "must be a name and a mapping."
+        )
+    if profile_name not in profiles:
+        raise ValueError(
+            f"driver_inputs.active_profile '{profile_name}' is not configured."
+        )
+    profile = profiles[profile_name]
+    if not isinstance(profile, dict):
+        raise ValueError(
+            f"driver_inputs.profiles.{profile_name} must be a mapping."
+        )
+    required = (
+        "brake_release_slope_pct_s",
+        "brake_release_min_speed_kmh",
+        "throttle_snap_slope_pct_s",
+        "loaded_steering_angle_deg",
+        "trail_brake_steering_angle_deg",
+    )
+    values = {"name": profile_name}
+    for key in required:
+        try:
+            value = float(profile[key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"driver_inputs.profiles.{profile_name}.{key} "
+                "must be a finite number."
+            ) from exc
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(
+                f"driver_inputs.profiles.{profile_name}.{key} "
+                "must be finite and non-negative."
+            )
+        values[key] = value
+    for key in (
+        "brake_release_slope_pct_s",
+        "throttle_snap_slope_pct_s",
+        "loaded_steering_angle_deg",
+        "trail_brake_steering_angle_deg",
+    ):
+        if values[key] == 0:
+            raise ValueError(
+                f"driver_inputs.profiles.{profile_name}.{key} must be positive."
+            )
+    return values
 
 
 def cluster_distances(distances, max_gap_m=EVENT_CLUSTER_DISTANCE_M):
@@ -181,6 +245,8 @@ def auto_detect_apexes(
             raise ValueError(f"{name} must be finite and greater than zero.")
     if not {"Normalized_Dist", "Ground Speed"}.issubset(lap.columns):
         return []
+    if "Lap Number" in lap and lap_is_excluded(lap, lap["Lap Number"].iloc[0]):
+        return []
 
     samples = pd.DataFrame(
         {
@@ -291,9 +357,11 @@ def _lap_samples(frame, lap_number, sample_rate_hz):
         if name in lap:
             channels[name] = pd.to_numeric(
                 lap[name], errors="coerce"
-            ).to_numpy(dtype=float)
+            ).to_numpy(dtype=float, copy=True)
         else:
             channels[name] = np.full(len(lap), np.nan)
+    if "Race Flag" in lap:
+        channels["Race Flag"] = lap["Race Flag"].astype(str).to_numpy()
     channels["Time"] = times
     channels["Distance"] = lap["_distance"].to_numpy(dtype=float)
     channels["Delta Time"] = deltas
@@ -395,6 +463,189 @@ def _throttle_hesitation_events(channels):
     return events
 
 
+def _distance_runs(mask, distance):
+    transitions = np.diff(np.r_[False, mask, False].astype(int))
+    starts = np.flatnonzero(transitions == 1)
+    ends = np.flatnonzero(transitions == -1)
+    return [
+        (int(start), int(end))
+        for start, end in zip(starts, ends)
+        if end > start and np.isfinite(distance[start : end].astype(float)).any()
+    ]
+
+
+def _neutralized_intervals(frame, lap_number, channels, track_config):
+    distance = channels["Distance"]
+    speed = channels["Ground Speed"]
+    steering = channels["Steering"]
+    intervals = []
+    tags = classify_session_laps(frame)["lap_tags"]
+    comparison_laps = [
+        lap
+        for lap in valid_lap_numbers(frame)
+        if lap != lap_number
+        and not tags.get(float(lap), {}).get("excluded_from_baselines", False)
+    ]
+    straight_slow = (
+        np.isfinite(speed)
+        & (speed < 120.0)
+        & np.isfinite(steering)
+        & (np.abs(steering) < 10.0)
+    )
+    for start, end in _distance_runs(straight_slow, distance):
+        run_distance = distance[start:end]
+        start_m = float(np.nanmin(run_distance)) if len(run_distance) else 0.0
+        end_m = float(np.nanmax(run_distance)) if len(run_distance) else 0.0
+        reference_speed = []
+        for other_lap in comparison_laps:
+            other = frame[
+                (frame["Lap Number"] == other_lap)
+                & frame["Normalized_Dist"].between(start_m, end_m)
+            ]
+            if "Steering" in other:
+                other_steering = pd.to_numeric(
+                    other["Steering"],
+                    errors="coerce",
+                )
+                other = other.loc[other_steering.abs() < 10.0]
+            other_speed = pd.to_numeric(
+                other.get("Ground Speed", pd.Series(dtype=float)),
+                errors="coerce",
+            ).dropna()
+            if len(other_speed):
+                reference_speed.append(float(other_speed.median()))
+        target_median_speed = (
+            float(np.nanmedian(speed[start:end])) if end > start else 0.0
+        )
+        reference_median_speed = (
+            float(np.median(reference_speed)) if reference_speed else None
+        )
+        if (
+            end_m - start_m > 300
+            and reference_median_speed is not None
+            and (
+                reference_median_speed >= 120.0
+                or target_median_speed < 0.9 * reference_median_speed
+            )
+        ):
+            intervals.append(
+                {
+                    "start_m": start_m,
+                    "end_m": end_m,
+                    "reason": "slow speed on a straight for over 300 m",
+                }
+            )
+
+    if "Race Flag" in channels:
+        lap_flags = pd.Series(channels["Race Flag"]).astype(str).str.casefold()
+        flag_mask = lap_flags.str.contains(
+            r"yellow|caution|safety|slow",
+            regex=True,
+            na=False,
+        ).to_numpy()
+        for start, end in _distance_runs(flag_mask, distance):
+            intervals.append(
+                {
+                    "start_m": float(np.nanmin(distance[start:end])),
+                    "end_m": float(np.nanmax(distance[start:end])),
+                    "reason": "race flag indicates caution or a slow zone",
+                }
+            )
+
+    sectors = {}
+    if track_config:
+        lap_distance = float(np.nanmax(distance)) if len(distance) else 0.0
+        scaled_config = scale_track_config_to_distance(
+            track_config,
+            lap_distance,
+        )
+        sectors = scaled_config.get("official_sectors") or scaled_config.get(
+            "sectors",
+            {},
+        )
+    if sectors:
+        target_lap = frame[frame["Lap Number"] == lap_number]
+        for bounds in sectors.values():
+            if len(bounds) != 2:
+                continue
+            start_m, end_m = (float(bound) for bound in bounds)
+            target_time = _sector_time(target_lap, start_m, end_m)
+            reference_times = [
+                _sector_time(
+                    frame[frame["Lap Number"] == other_lap],
+                    start_m,
+                    end_m,
+                )
+                for other_lap in comparison_laps
+            ]
+            reference_times = [
+                value
+                for value in reference_times
+                if value is not None and math.isfinite(value) and value > 0
+            ]
+            if (
+                target_time is not None
+                and math.isfinite(target_time)
+                and reference_times
+                and target_time > 1.1 * float(np.median(reference_times))
+            ):
+                intervals.append(
+                    {
+                        "start_m": start_m,
+                        "end_m": end_m,
+                        "reason": "sector elapsed time exceeds reference by over 10%",
+                    }
+                )
+
+    return sorted(intervals, key=lambda interval: interval["start_m"])
+
+
+def _traffic_lift_events(channels, corners, reference_channels):
+    if reference_channels is None:
+        return []
+    events = []
+    for corner in corners:
+        if not isinstance(corner.get("apex_m"), (int, float)):
+            continue
+        apex = float(corner["apex_m"])
+        target_mask = (
+            (channels["Distance"] >= apex - 150)
+            & (channels["Distance"] <= apex)
+            & np.isfinite(channels["Brake Pos"])
+        )
+        reference_mask = (
+            (reference_channels["Distance"] >= apex - 150)
+            & (reference_channels["Distance"] <= apex)
+            & np.isfinite(reference_channels["Brake Pos"])
+        )
+        target_indices = np.flatnonzero(target_mask)
+        reference_brake = reference_channels["Brake Pos"][reference_mask]
+        if not len(target_indices) or not len(reference_brake):
+            continue
+        target_index = int(
+            target_indices[np.argmax(channels["Brake Pos"][target_indices])]
+        )
+        peak_brake = float(channels["Brake Pos"][target_index])
+        reference_peak = float(np.max(reference_brake))
+        if (
+            20 <= peak_brake <= 45
+            and reference_peak > 0
+            and peak_brake < 0.6 * reference_peak
+        ):
+            events.append(
+                _event(
+                    channels["Distance"][target_index],
+                    target_index,
+                    corner=str(corner.get("name", corner.get("id", ""))),
+                    classification="Traffic / Lift",
+                    mistake=False,
+                    peak_brake_pct=peak_brake,
+                    reference_peak_brake_pct=reference_peak,
+                )
+            )
+    return events
+
+
 def analyze_driver_inputs(
     frame,
     lap_number,
@@ -407,7 +658,42 @@ def analyze_driver_inputs(
         raise ValueError("sample_rate_hz must be finite and greater than zero.")
     if not math.isfinite(cluster_distance_m) or cluster_distance_m < 0:
         raise ValueError("cluster_distance_m must be finite and non-negative.")
+    input_profile = driver_input_profile()
+    lap_tags = classify_session_laps(frame)["lap_tags"]
+    environment_by_lap = lap_environment_summary(frame)
+    lap_tag = lap_tags.get(float(lap_number), {})
     channels = _lap_samples(frame, lap_number, sample_rate_hz)
+    detector_names = (
+        "double_braking_m",
+        "abrupt_brake_release_m",
+        "trail_brake_overlap_pct",
+        "loaded_throttle_snaps_m",
+        "throttle_hesitations_m",
+        "dead_coasting_sec",
+        "loaded_downshifts_m",
+        "traffic_lifts_m",
+    )
+    if lap_tag.get("excluded_from_driver_inputs"):
+        reason = ", ".join(lap_tag["reasons"])
+        return {
+            "lap": float(lap_number),
+            "input_profile": input_profile["name"],
+            "sample_rate_hz": float(sample_rate_hz),
+            "metrics": {name: None for name in detector_names},
+            "events": [],
+            "raw_events": [],
+            "clusters": [],
+            "events_by_detector": {
+                name: [] for name in detector_names if name.endswith("_m")
+            },
+            "available": {
+                name: False for name in detector_names if name.endswith("_m")
+            },
+            "auto_detected_corners": [],
+            "excluded_reason": reason,
+            "neutralized_zones": [],
+            "reference_lap": None,
+        }
     distance = channels["Distance"]
     brake = channels["Brake Pos"]
     throttle = channels["Throttle Pos"]
@@ -434,13 +720,91 @@ def analyze_driver_inputs(
             if scaled_track_config
             else []
         )
+    neutralized = _neutralized_intervals(
+        frame,
+        lap_number,
+        channels,
+        scaled_track_config,
+    )
+    neutralized_mask = np.zeros(count, dtype=bool)
+    for interval in neutralized:
+        neutralized_mask |= (
+            (distance >= interval["start_m"])
+            & (distance <= interval["end_m"])
+        )
+    for name in (
+        "Brake Pos",
+        "Throttle Pos",
+        "Steering",
+        "Ground Speed",
+        "Gear",
+    ):
+        channels[name][neutralized_mask] = np.nan
+
+    reference_candidates = [
+        candidate
+        for candidate in valid_lap_numbers(frame)
+        if candidate != lap_number
+        and not lap_tags.get(float(candidate), {}).get(
+            "excluded_from_baselines",
+            False,
+        )
+        and (
+            environment_by_lap.get(float(lap_number), {}).get("fuel_bucket")
+            is None
+            or environment_by_lap.get(float(candidate), {}).get("fuel_bucket")
+            == environment_by_lap[float(lap_number)]["fuel_bucket"]
+        )
+    ]
+    reference_lap = None
+    if reference_candidates:
+        reference_lap = min(
+            reference_candidates,
+            key=lambda candidate: lap_time_seconds(
+                frame[frame["Lap Number"] == candidate]
+            ),
+        )
+    reference_channels = (
+        _lap_samples(frame, reference_lap, sample_rate_hz)
+        if reference_lap is not None
+        else None
+    )
+    if reference_channels is not None:
+        reference_zones = _neutralized_intervals(
+            frame,
+            reference_lap,
+            reference_channels,
+            scaled_track_config,
+        )
+        reference_mask = np.zeros(len(reference_channels["Distance"]), dtype=bool)
+        for interval in reference_zones:
+            reference_mask |= (
+                (reference_channels["Distance"] >= interval["start_m"])
+                & (reference_channels["Distance"] <= interval["end_m"])
+            )
+        reference_channels["Brake Pos"][reference_mask] = np.nan
+
     events_by_detector = {
         "double_braking_m": _double_braking_events(channels, corners),
         "abrupt_brake_release_m": [],
         "loaded_throttle_snaps_m": [],
         "throttle_hesitations_m": _throttle_hesitation_events(channels),
         "loaded_downshifts_m": [],
+        "traffic_lifts_m": _traffic_lift_events(
+            channels,
+            corners,
+            reference_channels,
+        ),
     }
+    traffic_corners = {
+        event["corner"] for event in events_by_detector["traffic_lifts_m"]
+    }
+    if traffic_corners:
+        events_by_detector["double_braking_m"] = [
+            event
+            for event in events_by_detector["double_braking_m"]
+            if event["corner"] not in traffic_corners
+        ]
 
     if count > 1:
         delta_time = channels["Delta Time"]
@@ -457,10 +821,14 @@ def analyze_driver_inputs(
         ) + 1
         downshift_times = channels["Time"][downshift_indices]
         for slope_index in np.flatnonzero(
-            (brake_slope < -600) & np.isfinite(brake_slope)
+            (brake_slope < -input_profile["brake_release_slope_pct_s"])
+            & np.isfinite(brake_slope)
         ):
             index = int(slope_index)
-            if not np.isfinite(speed[index]) or speed[index] <= 60:
+            if (
+                not np.isfinite(speed[index])
+                or speed[index] <= input_profile["brake_release_min_speed_kmh"]
+            ):
                 continue
             events_by_detector["abrupt_brake_release_m"].append(
                 _event(
@@ -471,8 +839,11 @@ def analyze_driver_inputs(
             )
         steering_at_change = steering[1:]
         for offset in np.flatnonzero(
-            (throttle_slope > 800)
-            & (np.abs(steering_at_change) > 20)
+            (throttle_slope > input_profile["throttle_snap_slope_pct_s"])
+            & (
+                np.abs(steering_at_change)
+                > input_profile["loaded_steering_angle_deg"]
+            )
             & np.isfinite(throttle_slope)
         ):
             index = int(offset + 1)
@@ -493,7 +864,10 @@ def analyze_driver_inputs(
             )
         downshifts = (
             (gear[1:] < gear[:-1])
-            & (np.abs(steering_at_change) > 20)
+            & (
+                np.abs(steering_at_change)
+                > input_profile["loaded_steering_angle_deg"]
+            )
             & np.isfinite(gear[1:])
             & np.isfinite(gear[:-1])
         )
@@ -531,7 +905,10 @@ def analyze_driver_inputs(
         overlap = (
             braking_zone
             & (brake <= 40)
-            & (np.abs(steering) > 15)
+            & (
+                np.abs(steering)
+                > input_profile["trail_brake_steering_angle_deg"]
+            )
         )
         trail_brake_overlap_pct = float(overlap.sum() / braking_zone.sum() * 100)
     else:
@@ -543,6 +920,7 @@ def analyze_driver_inputs(
         "loaded_throttle_snaps_m": ("Throttle Pos", "Steering"),
         "throttle_hesitations_m": ("Throttle Pos", "Brake Pos"),
         "loaded_downshifts_m": ("Gear", "Steering"),
+        "traffic_lifts_m": ("Brake Pos",),
     }
     available = {
         detector: all(
@@ -551,6 +929,7 @@ def analyze_driver_inputs(
         )
         for detector, required in required_channels.items()
     }
+    available["traffic_lifts_m"] &= reference_channels is not None
     raw_events = []
     for detector, events in events_by_detector.items():
         if not available[detector]:
@@ -602,6 +981,7 @@ def analyze_driver_inputs(
 
     return {
         "lap": float(lap_number),
+        "input_profile": input_profile["name"],
         "sample_rate_hz": (
             float(1.0 / np.median(channels["Delta Time"]))
             if len(channels["Delta Time"])
@@ -626,4 +1006,9 @@ def analyze_driver_inputs(
         "raw_events": raw_events,
         "clusters": clusters,
         "auto_detected_corners": corners,
+        "neutralized_zones": neutralized,
+        "excluded_reason": None,
+        "reference_lap": (
+            float(reference_lap) if reference_lap is not None else None
+        ),
     }

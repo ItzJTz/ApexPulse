@@ -6,10 +6,79 @@ import pandas as pd
 
 from src.core import math_channels
 from src.core.math_channels import tire_metrics
+from src.core.tire_envelope import off_track_spike_mask
 from src.pipeline.telemetry_io import prepare_telemetry_frame
 
 
 class TireMetricsTests(unittest.TestCase):
+    def test_polar_envelope_uses_wedge_percentiles_instead_of_extreme_samples(self):
+        angles = []
+        radii = []
+        for wedge in range(36):
+            angle = np.deg2rad(-175 + wedge * 10)
+            angles.extend([angle] * 21)
+            radii.extend([1.0] * 20 + [8.0])
+        frame = pd.DataFrame(
+            {
+                "Lap Number": np.ones(len(angles)),
+                "Lap Distance": np.arange(len(angles), dtype=float),
+                "Normalized_Dist": np.arange(len(angles), dtype=float),
+                "Ground Speed": np.full(len(angles), 100.0),
+                "G Force Lat": np.sin(angles) * radii,
+                "G Force Long": np.cos(angles) * radii,
+            }
+        )
+
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "friction_circle_exponent": 1.5,
+                "baseline_lap": None,
+                "compare_lap": None,
+            }[key],
+        ):
+            result = tire_metrics(frame)
+
+        area = result["friction_circle_area_g2_by_lap"][1.0]
+        self.assertAlmostEqual(area, 18 * np.sin(np.deg2rad(10)), places=6)
+        self.assertEqual(
+            result["friction_circle_wedge_coverage_by_lap"][1.0],
+            36,
+        )
+
+    def test_brief_off_track_g_spikes_are_rejected_but_sustained_samples_remain(self):
+        frame = pd.DataFrame(
+            {
+                "Time": np.arange(8, dtype=float) / 50,
+                "Num Tires Off Track": [0, 2, 0, 2, 2, 2, 0, 2],
+                "G Force Lat": [0, 2, 0, 2, 2, 2, 0, 2],
+                "CG Accel Vertical": [0, 0, 0, 0, 0, 0, 0, 0],
+            }
+        )
+
+        rejected = off_track_spike_mask(frame)
+
+        np.testing.assert_array_equal(
+            np.flatnonzero(rejected),
+            [1, 7],
+        )
+
+        high_rate_frame = pd.DataFrame(
+            {
+                "Num Tires Off Track": [0, 2, 2, 2, 0],
+                "G Force Lat": [0, 2, 2, 2, 0],
+                "CG Accel Vertical": [0, 0, 0, 0, 0],
+            }
+        )
+        high_rate_frame.attrs["quality"] = {
+            "channel_sample_rates_hz": {"G Force Lat": 100.0}
+        }
+        np.testing.assert_array_equal(
+            np.flatnonzero(off_track_spike_mask(high_rate_frame)),
+            [1, 2, 3],
+        )
+
     def test_math_channels_uses_configured_vehicle_parameters(self):
         frame = prepare_telemetry_frame(
             pd.DataFrame(
@@ -154,6 +223,41 @@ class TireMetricsTests(unittest.TestCase):
                 "change_percent": 0.0,
             },
         )
+
+    def test_reports_pressure_by_wheel_and_hot_pressure_threshold(self):
+        frame = prepare_telemetry_frame(
+            pd.DataFrame(
+                {
+                    "Lap Number": [1] * 4,
+                    "Lap Distance": [0, 10, 20, 30],
+                    "Ground Speed": [100] * 4,
+                    "Tire Pressure FL": [28.0] * 4,
+                    "Tire Pressure FR": [27.5] * 4,
+                    "Tire Pressure RL": [26.0] * 4,
+                    "Tire Pressure RR": [26.5] * 4,
+                }
+            )
+        )
+        frame.attrs["quality"]["channel_units"] = {
+            f"Tire Pressure {wheel}": "psi"
+            for wheel in ("FL", "FR", "RL", "RR")
+        }
+
+        with patch.object(
+            math_channels,
+            "config_value",
+            side_effect=lambda section, key: {
+                "baseline_lap": None,
+                "compare_lap": None,
+            }[key],
+        ):
+            result = tire_metrics(frame)
+
+        self.assertEqual(
+            result["tire_pressure_mean_psi_by_lap"][1.0],
+            {"FL": 28.0, "FR": 27.5, "RL": 26.0, "RR": 26.5},
+        )
+        self.assertEqual(result["wheels_above_27_5_psi_by_lap"][1.0], ["FL"])
 
     def test_reports_missing_channels_instead_of_inventing_tire_metrics(self):
         frame = prepare_telemetry_frame(

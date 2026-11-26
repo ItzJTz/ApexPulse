@@ -35,5 +35,20 @@ vehicle:
   minimum_slip_speed_kmh: 5.0
   high_speed_aero_threshold_kmh: 200.0
   brake_input_threshold_pct: 5.0
-  abrupt_brake_release_pct_s: 600.0
-  abrupt_brake_release_min_speed_kmh: 60.0
+
+driver_inputs:
+  active_profile: G7_PRO_CONTROLLER
+  profiles:
+    G7_PRO_CONTROLLER:
+      brake_release_slope_pct_s: 600.0
+      brake_release_min_speed_kmh: 60.0
+      throttle_snap_slope_pct_s: 800.0
+      loaded_steering_angle_deg: 20.0
+      trail_brake_steering_angle_deg: 15.0
+    LOAD_CELL_WHEEL:
+      # Starting values only; calibrate these against the wheel and pedal setup.
+      brake_release_slope_pct_s: 600.0
+      brake_release_min_speed_kmh: 60.0
+      throttle_snap_slope_pct_s: 800.0
+      loaded_steering_angle_deg: 20.0
+      trail_brake_steering_angle_deg: 15.0

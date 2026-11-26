@@ -589,6 +589,36 @@ def analysis_report(frame, quality_report, lap_a, lap_b, grid_step=None):
             "friction_circle_area_comparison": tire[
                 "friction_circle_area_comparison"
             ],
+            "friction_circle_wedge_coverage_by_lap": {
+                str(lap): coverage
+                for lap, coverage in tire[
+                    "friction_circle_wedge_coverage_by_lap"
+                ].items()
+            },
+            "off_track_spike_samples_excluded_by_lap": {
+                str(lap): count
+                for lap, count in tire[
+                    "off_track_spike_samples_excluded_by_lap"
+                ].items()
+            },
+            "friction_circle_area_method": tire[
+                "friction_circle_area_method"
+            ],
+            "tire_pressure_mean_psi_by_lap": {
+                str(lap): values
+                for lap, values in tire[
+                    "tire_pressure_mean_psi_by_lap"
+                ].items()
+            },
+            "wheels_above_27_5_psi_by_lap": {
+                str(lap): wheels
+                for lap, wheels in tire[
+                    "wheels_above_27_5_psi_by_lap"
+                ].items()
+            },
+            "tire_pressure_units_assumed": tire[
+                "tire_pressure_units_assumed"
+            ],
             "tire_work_integral_by_lap": {
                 str(lap): value
                 for lap, value in tire["tire_work_integral_by_lap"].items()
